@@ -2126,9 +2126,11 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
             cursor_x += cursor_dx;
             cursor_y += cursor_dy;
             if (cursor_x < 8) cursor_x = 8;
-            if (cursor_x > 631) cursor_x = 631;
+            if (cursor_x > configured_display_width() - 9)
+                cursor_x = configured_display_width() - 9;
             if (cursor_y < 8) cursor_y = 8;
-            if (cursor_y > 471) cursor_y = 471;
+            if (cursor_y > configured_display_height() - 9)
+                cursor_y = configured_display_height() - 9;
             direct_steering = 0.0F;
             direct_vertical = 0.0F;
         }

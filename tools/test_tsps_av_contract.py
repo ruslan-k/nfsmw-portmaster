@@ -18,6 +18,10 @@ def test_runtime_uses_configured_dimensions_for_gles_window():
     assert 'nfsmw_platform_runtime_start(display_width, display_height)' in JNI
     assert 'NFSMW_WIDTH' in JNI
     assert 'NFSMW_HEIGHT' in JNI
+    assert 'cursor_x > configured_display_width() - 9' in JNI
+    assert 'cursor_y > configured_display_height() - 9' in JNI
+    assert 'cursor_x > 631' not in JNI
+    assert 'cursor_y > 471' not in JNI
 
 
 if __name__ == '__main__':
