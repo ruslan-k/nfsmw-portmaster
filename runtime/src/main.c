@@ -92,6 +92,11 @@ int main(int argc, char **argv)
         (void)fprintf(stderr, "G3-REL FAIL: %s\n", error);
         goto done;
     }
+    if (nfsmw_apply_fmodex_patches(&images[1U], error,
+                                   sizeof(error)) != 0) {
+        (void)fprintf(stderr, "G3-PATCH FAIL: %s\n", error);
+        goto done;
+    }
     if (nfsmw_apply_app_patches(&images[MODULE_COUNT - 1U],
                                 error, sizeof(error)) != 0) {
         (void)fprintf(stderr, "G3-PATCH FAIL: %s\n", error);

@@ -50,6 +50,58 @@ static int configured_display_height(void)
     return configured_display_dimension("NFSMW_HEIGHT", 480);
 }
 
+int nfsmw_apply_fmodex_patches(const struct elf32_image *fmod_image,
+                               char *error, size_t error_size)
+{
+    /*
+     * FMOD Ex 4.44's NDK cpu-features parser looks for 32-bit tokens
+     * (neon / vfp).  An AArch64 kernel advertises asimd/fp instead, so
+     * android_getCpuFeatures() returns zero and System_setOutput fails with
+     * NEEDSHARDWARE before its Java AudioTrack mixer can be registered.
+     * TSPS Cortex-A55 cores can execute the AArch32 NEON mixer; bypass only
+     * this stale feature-name rejection after verifying the exact words.
+     */
+    enum { CPU_NEEDSHARDWARE = 0x000a9b34U };
+    static const uint32_t expected[2] = { 0x03a05030U, 0x0a000006U };
+    static const uint32_t patched[2] = { 0xe1a00000U, 0xe1a00000U };
+    const uintptr_t check = fmod_image != NULL ?
+        fmod_image->load_bias + CPU_NEEDSHARDWARE : 0U;
+    uintptr_t page;
+    uint32_t current[2];
+
+    if (fmod_image == NULL || fmod_image->mapping == NULL ||
+        fmod_image->page_size == 0U ||
+        CPU_NEEDSHARDWARE + sizeof(current) > fmod_image->mapping_size) {
+        (void)snprintf(error, error_size, "invalid libfmodex patch image");
+        return -1;
+    }
+    (void)memcpy(current, (const void *)check, sizeof(current));
+    if (memcmp(current, expected, sizeof(current)) != 0) {
+        (void)snprintf(error, error_size,
+                       "unexpected libfmodex NEEDSHARDWARE signature");
+        return -1;
+    }
+    page = check & ~((uintptr_t)fmod_image->page_size - 1U);
+    if (mprotect((void *)page, fmod_image->page_size,
+                 PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        (void)snprintf(error, error_size,
+                       "make fmodex patch page writable: %s",
+                       strerror(errno));
+        return -1;
+    }
+    (void)memcpy((void *)check, patched, sizeof(patched));
+    __builtin___clear_cache((char *)check, (char *)check + sizeof(patched));
+    if (mprotect((void *)page, fmod_image->page_size,
+                 PROT_READ | PROT_EXEC) != 0) {
+        (void)snprintf(error, error_size,
+                       "restore fmodex patch page: %s", strerror(errno));
+        return -1;
+    }
+    (void)printf("G3-PATCH PASS FMOD NEEDSHARDWARE skip at 0x%08x\n",
+                 CPU_NEEDSHARDWARE);
+    return 0;
+}
+
 /*
  * The silent FMOD bridge deliberately leaves some optional Event handles
  * empty.  libapp's event-state helper dereferences its wrapper before testing
