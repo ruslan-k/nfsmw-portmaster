@@ -17,13 +17,32 @@
 #define CMD_FLUSH (32u * 1024u)
 #define XPORT_PATH "/tmp/tspgl-xport"
 #define XPORT_MAGIC 0x58504f52u
+#define XPORT_INIT_WAIT_US 200u
+#define XPORT_INIT_WAIT_LOOPS 10000u
 
 static struct tspgl_shared *X;
+
+static void tspgl_shared_init(struct tspgl_shared *s, int32_t pid)
+{
+    memset(s, 0, sizeof(*s));
+    s->lock = 1;
+    s->sock = -1;
+    s->pid = pid;
+    s->unpack_align = 4;
+    s->st_viewport[2] = 640;
+    s->st_viewport[3] = 480;
+    s->st_scissor[2] = 640;
+    s->st_scissor[3] = 480;
+    __sync_synchronize();
+    s->magic = XPORT_MAGIC;
+    fprintf(stderr, "tspgl: shared xport pid=%d\n", (int)pid);
+}
 
 struct tspgl_shared *tspgl_shared(void)
 {
     int fd;
     int32_t pid;
+    unsigned wait_loops = 0;
 
     if (X)
         return X;
@@ -41,26 +60,40 @@ struct tspgl_shared *tspgl_shared(void)
         return NULL;
     }
     pid = (int32_t)getpid();
-    if (X->magic != XPORT_MAGIC || X->pid != pid) {
+
+    /*
+     * /tmp/tspgl-xport intentionally survives between the multiple FAT32 DSO
+     * aliases loaded by one process.  It may also survive an externally killed
+     * PortMaster run.  The old implementation waited forever when that stale
+     * mapping contained lock=1 and an old pid, which is exactly the observed
+     * G3 provider-census hang (single ARMHF thread in hrtimer_nanosleep).
+     *
+     * Give another constructor from this process a bounded window to finish
+     * initialization.  If the mapping still belongs to another/stale pid after
+     * two seconds, recover it.  Concurrent NFS instances are not supported, so
+     * preferring forward progress here is safer than an unbounded wait.
+     */
+    while (X->magic != XPORT_MAGIC || X->pid != pid) {
         if (__sync_bool_compare_and_swap(&X->lock, 0, 1)) {
-            if (X->magic != XPORT_MAGIC || X->pid != pid) {
-                memset(X, 0, sizeof(*X));
-                X->lock = 1;
-                X->sock = -1;
-                X->pid = pid;
-                X->unpack_align = 4;
-                X->st_viewport[2] = 640;
-                X->st_viewport[3] = 480;
-                X->st_scissor[2] = 640;
-                X->st_scissor[3] = 480;
-                X->magic = XPORT_MAGIC;
-                fprintf(stderr, "tspgl: shared xport pid=%d\n", (int)pid);
-            }
+            if (X->magic != XPORT_MAGIC || X->pid != pid)
+                tspgl_shared_init(X, pid);
             __sync_lock_release(&X->lock);
-        } else {
-            while (X->magic != XPORT_MAGIC || X->pid != pid)
-                usleep(200);
+            return X;
         }
+
+        if (++wait_loops >= XPORT_INIT_WAIT_LOOPS) {
+            int32_t stale_pid = X->pid;
+            int stale_lock = X->lock;
+
+            fprintf(stderr,
+                    "tspgl: stale shared xport lock=%d owner=%d -> recover pid=%d\n",
+                    stale_lock, (int)stale_pid, (int)pid);
+            X->lock = 0;
+            __sync_synchronize();
+            wait_loops = 0;
+            continue;
+        }
+        usleep(XPORT_INIT_WAIT_US);
     }
     return X;
 }
