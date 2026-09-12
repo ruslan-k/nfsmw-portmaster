@@ -56,6 +56,8 @@ struct fmod_async_read_prefix {
 enum {
     TRACKED_FILE_CAPACITY = 64,
     TRACKED_PATH_CAPACITY = 384,
+    FMOD_HARDWARE_VALUE = 0x00000020U,
+    FMOD_SOFTWARE_VALUE = 0x00000040U,
     FMOD_OPENMEMORY_VALUE = 0x00000800U,
     FMOD_OPENMEMORY_POINT_VALUE = 0x10000000U
 };
@@ -184,6 +186,13 @@ static void describe_sound_source(const char *name_or_data, uint32_t mode,
     } else {
         (void)snprintf(text, text_size, "%.383s", name_or_data);
     }
+}
+
+static int mp3_software_override_enabled(void)
+{
+    const char *configured = getenv("NFSMW_FMOD_MP3_SOFTWARE");
+
+    return configured == NULL || strcmp(configured, "0") != 0;
 }
 
 static fmod_result NFSMW_GUEST_ABI trace_file_open(
@@ -315,16 +324,27 @@ static fmod_result NFSMW_GUEST_ABI trace_create_sound(
     unsigned int call = next_counter(&create_sound_calls);
     fmod_result result;
     void *created;
+    uint32_t effective_mode = mode;
+    int mp3_software_override = 0;
 
     describe_sound_source(name_or_data, mode, source, sizeof(source));
-    result = original_create_sound(system, name_or_data, mode,
+    if (strstr(source, ".mp3") != NULL &&
+        (mode & FMOD_HARDWARE_VALUE) != 0U &&
+        mp3_software_override_enabled() != 0) {
+        effective_mode = (mode & ~FMOD_HARDWARE_VALUE) |
+                         FMOD_SOFTWARE_VALUE;
+        mp3_software_override = 1;
+    }
+    result = original_create_sound(system, name_or_data, effective_mode,
                                    extra_information, sound);
     created = sound != NULL ? *sound : NULL;
     if (sampled(call) != 0 ||
         (strstr(source, ".mp3") != NULL && call % 128U == 0U)) {
         (void)printf("G8-CREATE-SOUND call=%u source=%s mode=0x%08x "
-                     "exinfo=%p result=%d sound=%p\n",
-                     call, source, mode, extra_information,
+                     "effective=0x%08x mp3-software=%d exinfo=%p "
+                     "result=%d sound=%p\n",
+                     call, source, mode, effective_mode,
+                     mp3_software_override, extra_information,
                      (int)result, created);
     }
     return result;

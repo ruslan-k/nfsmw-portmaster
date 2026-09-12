@@ -38,6 +38,10 @@ def test_fmod_music_trace_contract():
     assert "_ZN4FMOD6System13setFileSystem" in TRACE
     assert 'pcs("aapcs")' in TRACE
     assert "G8-CREATE-SOUND" in TRACE
+    assert "FMOD_HARDWARE_VALUE = 0x00000020U" in TRACE
+    assert "FMOD_SOFTWARE_VALUE = 0x00000040U" in TRACE
+    assert "NFSMW_FMOD_MP3_SOFTWARE" in TRACE
+    assert "effective_mode = (mode & ~FMOD_HARDWARE_VALUE)" in TRACE
     assert "G8-CREATE-STREAM" in TRACE
     assert "G8-FS setFileSystem" in TRACE
     assert "G8-FS open" in TRACE

@@ -207,6 +207,7 @@ if [ "$TSPS_BRIDGE" -eq 1 ]; then
     export NFSMW_PERFORMANCE_SCORE=${NFSMW_PERFORMANCE_SCORE:-20}
     export NFSMW_SILENT_AUDIO=${NFSMW_SILENT_AUDIO:-0}
     export NFSMW_AUDIO_OUTPUT=${NFSMW_AUDIO_OUTPUT:-1}
+    export NFSMW_FMOD_MP3_SOFTWARE=${NFSMW_FMOD_MP3_SOFTWARE:-1}
     export NFSMW_OBB_PATH="$GAMEDIR/gamedata/main.1003128.com.ea.games.nfs13_row.obb"
 
     echo "armhf_library_path=$LIB"
@@ -244,6 +245,7 @@ else
     export NFSMW_PERFORMANCE_SCORE=${NFSMW_PERFORMANCE_SCORE:-20}
     export NFSMW_SILENT_AUDIO=${NFSMW_SILENT_AUDIO:-0}
     export NFSMW_AUDIO_OUTPUT=${NFSMW_AUDIO_OUTPUT:-1}
+    export NFSMW_FMOD_MP3_SOFTWARE=${NFSMW_FMOD_MP3_SOFTWARE:-1}
     export NFSMW_OBB_PATH="$GAMEDIR/gamedata/main.1003128.com.ea.games.nfs13_row.obb"
 
     command -v pm_platform_helper >/dev/null 2>&1 && \
