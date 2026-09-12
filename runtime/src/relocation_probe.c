@@ -1,6 +1,7 @@
 #include "relocation_probe.h"
 
 #include "compat_bridge.h"
+#include "fmod_trace.h"
 #include "softfp_symbols.h"
 #include "symbol_probe.h"
 
@@ -167,10 +168,17 @@ static uintptr_t relocation_lookup(const char *name, unsigned int binding,
                                    void *opaque)
 {
     struct relocation_context *context = opaque;
+    const char *requesting_soname =
+        context->images[context->current_image].soname;
     uintptr_t address;
     size_t index;
 
     (void)binding;
+    address = nfsmw_fmod_trace_resolve(requesting_soname, name);
+    if (address != 0U) {
+        context->stats->alias_resolutions += 1U;
+        return address;
+    }
     for (index = 0U; index < context->current_image; ++index) {
         address = elf32_find_export(&context->images[index], name);
         if (address != 0U) {
@@ -214,6 +222,7 @@ int nfsmw_relocation_probe(struct elf32_image *images, size_t image_count,
                            char *error, size_t error_size)
 {
     struct relocation_context context;
+    const struct elf32_image *fmod_image = NULL;
     size_t index;
 
     if (images == NULL || image_count == 0U || stats == NULL) {
@@ -225,6 +234,20 @@ int nfsmw_relocation_probe(struct elf32_image *images, size_t image_count,
     (void)memset(&context, 0, sizeof(context));
     context.images = images;
     context.stats = stats;
+    for (index = 0U; index < image_count; ++index) {
+        if (images[index].soname != NULL &&
+            strcmp(images[index].soname, "libfmodex.so") == 0) {
+            fmod_image = &images[index];
+            break;
+        }
+    }
+    if (fmod_image == NULL) {
+        (void)snprintf(error, error_size,
+                       "FMOD trace could not find libfmodex.so");
+        return -1;
+    }
+    if (nfsmw_fmod_trace_bind(fmod_image, error, error_size) != 0)
+        return -1;
     open_host_libraries(&context);
 
     for (index = 0U; index < image_count; ++index) {
