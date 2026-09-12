@@ -62,25 +62,50 @@ static uintptr_t alias_lookup(const char *name)
     return 0U;
 }
 
+static int is_graphics_library(const char *name)
+{
+    return strncmp(name, "libEGL.so", 9U) == 0 ||
+           strncmp(name, "libGLESv2.so", 12U) == 0;
+}
+
 static void open_host_libraries(struct relocation_context *context)
 {
     static const char *const candidates[] = {
         "libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0",
         "libEGL.so.1", "libEGL.so", "libGLESv2.so.2", "libGLESv2.so"
     };
+    const int split_gles_bridge = getenv("TSPGL_PRESENT") != NULL;
+    int graphics_opened = 0;
     size_t index;
 
     for (index = 0U;
          index < sizeof(candidates) / sizeof(candidates[0]); ++index) {
         void *handle;
+        const int graphics = is_graphics_library(candidates[index]);
 
         if (context->host_count == RELOCATION_HOST_CAPACITY) {
             break;
         }
+        if (split_gles_bridge && graphics && graphics_opened) {
+            (void)printf("G3-REL-HOST skip duplicate proxy %s\n",
+                         candidates[index]);
+            continue;
+        }
+        (void)printf("G3-REL-HOST dlopen begin %s\n", candidates[index]);
+        (void)fflush(stdout);
         handle = dlopen(candidates[index], RTLD_LAZY | RTLD_LOCAL);
         if (handle != NULL) {
             context->host_handles[context->host_count] = handle;
             context->host_count += 1U;
+            if (split_gles_bridge && graphics) {
+                graphics_opened = 1;
+            }
+            (void)printf("G3-REL-HOST dlopen ok %s\n", candidates[index]);
+        } else {
+            const char *message = dlerror();
+            (void)printf("G3-REL-HOST dlopen fail %s: %s\n",
+                         candidates[index],
+                         message != NULL ? message : "unknown");
         }
     }
 }
