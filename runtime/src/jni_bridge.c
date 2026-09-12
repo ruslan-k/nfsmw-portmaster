@@ -6,7 +6,9 @@
 #include "softfp_bridge.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -319,6 +321,20 @@ struct fake_object {
     float text_size;
 };
 
+typedef int (*fmod_get_info_function)(void *, void *, int);
+typedef int (*fmod_process_function)(void *, void *, void *);
+
+struct fmod_audio_worker {
+    pthread_t thread;
+    fmod_get_info_function get_info;
+    fmod_process_function process;
+    struct fake_object buffer;
+    atomic_int stop_requested;
+    atomic_int failed;
+    int created;
+    char error[160];
+};
+
 union fake_jvalue {
     unsigned char boolean_value;
     signed char byte_value;
@@ -378,6 +394,148 @@ static struct fake_object fmod_audio_device = {
 static struct fake_object surface_view = {
     .magic = FAKE_MAGIC, .kind = FAKE_GENERIC
 };
+
+static void fmod_audio_sleep(long milliseconds)
+{
+    struct timespec delay = {
+        .tv_sec = milliseconds / 1000L,
+        .tv_nsec = (milliseconds % 1000L) * 1000000L
+    };
+
+    while (nanosleep(&delay, &delay) != 0 && errno == EINTR) {}
+}
+
+static void fmod_audio_fail(struct fmod_audio_worker *worker,
+                            const char *message)
+{
+    (void)snprintf(worker->error, sizeof(worker->error), "%s", message);
+    atomic_store_explicit(&worker->failed, 1, memory_order_release);
+}
+
+static void *fmod_audio_worker_main(void *context)
+{
+    struct fmod_audio_worker *worker = context;
+    int sample_rate = -1;
+    int mixer_state = -1;
+
+    while (atomic_load_explicit(&worker->stop_requested,
+                                memory_order_acquire) == 0) {
+        sample_rate = worker->get_info(
+            &jni_handle, &fmod_audio_device, 0);
+        if (sample_rate > 0) break;
+        fmod_audio_sleep(5L);
+    }
+    if (sample_rate > 0) {
+        int dsp_length = worker->get_info(
+            &jni_handle, &fmod_audio_device, 1);
+        int dsp_buffers = worker->get_info(
+            &jni_handle, &fmod_audio_device, 2);
+        uint64_t requested = dsp_length > 0 ?
+            (uint64_t)(unsigned int)dsp_length * 4U : 0U;
+
+        if (sample_rate > 192000 || dsp_length < 64 ||
+            dsp_length > 16384 || dsp_buffers < 1 || dsp_buffers > 32 ||
+            requested > UINT32_MAX) {
+            fmod_audio_fail(worker, "invalid FMOD AudioTrack format");
+            return NULL;
+        }
+        worker->buffer.bytes = calloc((size_t)requested, 1U);
+        if (worker->buffer.bytes == NULL ||
+            nfsmw_platform_runtime_audio_start(sample_rate, 2) != 0) {
+            free(worker->buffer.bytes);
+            worker->buffer.bytes = NULL;
+            fmod_audio_fail(worker, "FMOD AudioTrack SDL output startup failed");
+            return NULL;
+        }
+        worker->buffer.length = (size_t)requested;
+        (void)printf("G8-AUDIOWORKER PASS rate=%dHz dsp-frames=%d "
+                     "buffers=%d pcm-bytes=%u\n", sample_rate, dsp_length,
+                     dsp_buffers, (unsigned int)requested);
+    }
+
+    while (sample_rate > 0 &&
+           atomic_load_explicit(&worker->stop_requested,
+                                memory_order_acquire) == 0) {
+        int current = worker->get_info(
+            &jni_handle, &fmod_audio_device, 3);
+
+        if (current != mixer_state) {
+            (void)printf("G8-AUDIOWORKER mixer-running=%d\n", current);
+            mixer_state = current;
+        }
+        if (current == 1) {
+            const unsigned int size = (unsigned int)worker->buffer.length;
+            const unsigned int target = size * 4U;
+            unsigned int rounds = 0U;
+
+            while (nfsmw_platform_runtime_audio_queued() < target &&
+                   rounds < 8U &&
+                   atomic_load_explicit(&worker->stop_requested,
+                                        memory_order_acquire) == 0) {
+                (void)worker->process(
+                    &jni_handle, &fmod_audio_device, &worker->buffer);
+                if (nfsmw_platform_runtime_audio_queue(
+                        worker->buffer.bytes, size) != 0) {
+                    fmod_audio_fail(worker,
+                                    "FMOD AudioTrack PCM queue failed");
+                    free(worker->buffer.bytes);
+                    worker->buffer.bytes = NULL;
+                    return NULL;
+                }
+                ++rounds;
+            }
+        }
+        fmod_audio_sleep(2L);
+    }
+    free(worker->buffer.bytes);
+    worker->buffer.bytes = NULL;
+    return NULL;
+}
+
+static int fmod_audio_worker_start(struct fmod_audio_worker *worker,
+                                   fmod_get_info_function get_info,
+                                   fmod_process_function process,
+                                   char *error, size_t error_size)
+{
+    int result;
+
+    (void)memset(worker, 0, sizeof(*worker));
+    worker->get_info = get_info;
+    worker->process = process;
+    worker->buffer.magic = FAKE_MAGIC;
+    worker->buffer.kind = FAKE_DIRECT_BUFFER;
+    atomic_init(&worker->stop_requested, 0);
+    atomic_init(&worker->failed, 0);
+    result = pthread_create(&worker->thread, NULL,
+                            fmod_audio_worker_main, worker);
+    if (result != 0) {
+        (void)snprintf(error, error_size,
+                       "FMOD audio worker startup failed: %s",
+                       strerror(result));
+        return -1;
+    }
+    worker->created = 1;
+    (void)printf("G8-AUDIOWORKER thread-started\n");
+    return 0;
+}
+
+static int fmod_audio_worker_failed(struct fmod_audio_worker *worker,
+                                    char *error, size_t error_size)
+{
+    if (atomic_load_explicit(&worker->failed, memory_order_acquire) == 0)
+        return 0;
+    (void)snprintf(error, error_size, "%s", worker->error);
+    return -1;
+}
+
+static void fmod_audio_worker_stop(struct fmod_audio_worker *worker)
+{
+    if (worker->created == 0) return;
+    atomic_store_explicit(&worker->stop_requested, 1, memory_order_release);
+    (void)pthread_join(worker->thread, NULL);
+    worker->created = 0;
+    (void)printf("G8-AUDIOWORKER thread-stopped\n");
+}
 
 static struct fake_method *as_method(void *value);
 
@@ -1953,8 +2111,6 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
     typedef void *(*native_controller_instance_function)(void);
     typedef void (NFSMW_SOFTFP *native_touch_function)(
         void *, void *, int, int, float, float);
-    typedef int (*fmod_get_info_function)(void *, void *, int);
-    typedef int (*fmod_process_function)(void *, void *, void *);
     uintptr_t surface_created_address = required_export(app_image,
         "Java_com_ea_ironmonkey_GameActivityMain_nativeSurfaceCreated",
         error, error_size);
@@ -2021,13 +2177,8 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
     unsigned int frame_limit = 18000U;
     unsigned int start_ticks;
     unsigned int frame;
-    struct fake_object fmod_buffer = {
-        .magic = FAKE_MAGIC, .kind = FAKE_DIRECT_BUFFER
-    };
+    struct fmod_audio_worker fmod_worker;
     int fmod_audio_enabled = audio_output_enabled();
-    int fmod_audio_started = 0;
-    int fmod_mixer_state = -1;
-    unsigned int fmod_buffer_size = 0U;
     void *controller_state;
     const char *configured_limit = getenv("NFSMW_TEST_FRAMES");
 
@@ -2065,7 +2216,7 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
                      sizeof(fmod_get_info));
         (void)memcpy(&fmod_process, &fmod_process_address,
                      sizeof(fmod_process));
-        (void)printf("G8-AUDIOTRACK native Java mixer replacement enabled\n");
+        (void)printf("G8-AUDIOWORKER Java mixer replacement enabled\n");
     }
     if (configured_limit != NULL && configured_limit[0] != '\0') {
         unsigned long parsed = strtoul(configured_limit, NULL, 10);
@@ -2107,6 +2258,11 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
                        "MOGA controller singleton is unavailable");
         return -1;
     }
+    (void)memset(&fmod_worker, 0, sizeof(fmod_worker));
+    if (fmod_audio_enabled != 0 &&
+        fmod_audio_worker_start(&fmod_worker, fmod_get_info, fmod_process,
+                                error, error_size) != 0)
+        return -1;
     for (frame = 0U; frame_limit == 0U || frame < frame_limit; ++frame) {
         short axes[6];
         unsigned char buttons[15];
@@ -2293,86 +2449,10 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
         if (frame < 10U || frame % 300U == 0U)
             (void)printf("G7-FRAME enter=%u\n", frame);
         tick(&jni_handle, &run_loop);
-        /*
-         * FMOD Ex on this APK uses its Java AudioTrack backend. Android's
-         * GameActivityMain starts org.fmod.FMODAudioDevice after onResume;
-         * that Java thread allocates a direct ByteBuffer, calls fmodProcess,
-         * and writes the resulting signed 16-bit stereo PCM to AudioTrack.
-         *
-         * This loader intentionally enters the native activity without a VM,
-         * so reproduce that small pull loop here and feed the already proven
-         * SDL/ALSA queue. The original FMOD mixer, event banks, 3D audio, and
-         * all game-side sound logic remain untouched.
-         */
-        if (fmod_audio_enabled != 0) {
-            int sample_rate = fmod_get_info(
-                &jni_handle, &fmod_audio_device, 0);
-
-            if (sample_rate <= 0 &&
-                (frame < 10U || frame % 300U == 0U))
-                (void)printf("G8-AUDIOTRACK waiting sample-rate=%d frame=%u\n",
-                             sample_rate, frame);
-
-            if (fmod_audio_started == 0 && sample_rate > 0) {
-                int dsp_length = fmod_get_info(
-                    &jni_handle, &fmod_audio_device, 1);
-                int dsp_buffers = fmod_get_info(
-                    &jni_handle, &fmod_audio_device, 2);
-                uint64_t requested = dsp_length > 0 ?
-                    (uint64_t)(unsigned int)dsp_length * 4U : 0U;
-
-                if (sample_rate > 192000 || dsp_length < 64 ||
-                    dsp_length > 16384 || dsp_buffers < 1 ||
-                    dsp_buffers > 32 || requested > UINT32_MAX) {
-                    (void)snprintf(error, error_size,
-                                   "invalid FMOD AudioTrack format "
-                                   "rate=%d length=%d buffers=%d",
-                                   sample_rate, dsp_length, dsp_buffers);
-                    return -1;
-                }
-                fmod_buffer_size = (unsigned int)requested;
-                fmod_buffer.bytes = calloc(fmod_buffer_size, 1U);
-                if (fmod_buffer.bytes == NULL ||
-                    nfsmw_platform_runtime_audio_start(sample_rate, 2) != 0) {
-                    (void)snprintf(error, error_size,
-                                   "FMOD AudioTrack SDL output startup failed");
-                    return -1;
-                }
-                fmod_buffer.length = fmod_buffer_size;
-                fmod_audio_started = 1;
-                (void)printf("G8-AUDIOTRACK PASS rate=%dHz "
-                             "dsp-frames=%d buffers=%d pcm-bytes=%u\n",
-                             sample_rate, dsp_length, dsp_buffers,
-                             fmod_buffer_size);
-            }
-            if (fmod_audio_started != 0) {
-                int mixer_running = fmod_get_info(
-                    &jni_handle, &fmod_audio_device, 3);
-
-                if (mixer_running != fmod_mixer_state) {
-                    (void)printf("G8-AUDIOTRACK mixer-running=%d frame=%u\n",
-                                 mixer_running, frame);
-                    fmod_mixer_state = mixer_running;
-                }
-                if (mixer_running == 1 &&
-                    nfsmw_platform_runtime_audio_queued() <=
-                        fmod_buffer_size * 2U) {
-                    int process_result = fmod_process(
-                        &jni_handle, &fmod_audio_device, &fmod_buffer);
-
-                    if (process_result != 0 && frame < 60U)
-                        (void)printf("G8-AUDIOTRACK process-result=%d "
-                                     "frame=%u\n", process_result, frame);
-                    if (nfsmw_platform_runtime_audio_queue(
-                            fmod_buffer.bytes, fmod_buffer_size) != 0) {
-                        (void)snprintf(error, error_size,
-                                       "FMOD AudioTrack PCM queue failed");
-                        return -1;
-                    }
-                }
-            }
+        if (fmod_audio_worker_failed(&fmod_worker, error, error_size) != 0) {
+            fmod_audio_worker_stop(&fmod_worker);
+            return -1;
         }
-        nfsmw_opensl_pump();
         nfsmw_platform_runtime_present(frame, cursor_x, cursor_y,
                                        cursor_visible);
         if (frame < 10U || frame % 300U == 0U)
@@ -2383,6 +2463,7 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
             break;
         }
     }
+    fmod_audio_worker_stop(&fmod_worker);
     {
         unsigned int elapsed = nfsmw_platform_runtime_ticks() - start_ticks;
         double fps = elapsed != 0U ? (double)frame * 1000.0 / (double)elapsed : 0.0;
