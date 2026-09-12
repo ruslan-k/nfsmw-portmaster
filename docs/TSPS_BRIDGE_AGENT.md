@@ -64,7 +64,7 @@ The launcher also accepts a card-ready layout directly under `ports/nfsmw/`, whi
 Build the normal ARMv7 NFS runtime exactly as for R36S:
 
 ```bash
-make -C runtime
+ZIG=/path/to/zig tools/build_tsps_runtime.sh
 ZIG=/path/to/zig \
 TSPS_BRIDGE_ROOT=/path/to/verified/gof2/Data/ports/gof2 \
 tools/build_tsps_bridge.sh

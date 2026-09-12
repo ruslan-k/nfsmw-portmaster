@@ -22,7 +22,7 @@ common=(
     -o "$BUILD/libEGL.so.1" \
     "$GL/client.c" "$GL/client_xport.c" -lm
 
-for name in libEGL.so libGLESv2.so libGLESv2.so.2 \
+for name in libEGL.so.1 libEGL.so libGLESv2.so libGLESv2.so.2 \
            libGLESv1_CM.so libGLESv1_CM.so.1; do
     cp -f "$BUILD/libEGL.so.1" "$OUT/glbridge/$name"
 done
