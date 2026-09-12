@@ -1,0 +1,26 @@
+#!/usr/bin/env python3
+from pathlib import Path
+
+ROOT = Path(__file__).parents[1]
+LAUNCHER = (ROOT / "portmaster/Need for Speed Most Wanted.sh").read_text()
+JNI = (ROOT / "runtime/src/jni_bridge.c").read_text()
+
+
+def test_launcher_defaults_to_panel_resolution_and_real_music_state():
+    assert 'TSPGL_WIDTH="${NFSMW_WIDTH:-1280}"' in LAUNCHER
+    assert 'TSPGL_HEIGHT="${NFSMW_HEIGHT:-720}"' in LAUNCHER
+    assert 'NFSMW_WIDTH="${NFSMW_WIDTH:-1280}"' in LAUNCHER
+    assert 'NFSMW_HEIGHT="${NFSMW_HEIGHT:-720}"' in LAUNCHER
+    assert 'NFSMW_SILENT_AUDIO=${NFSMW_SILENT_AUDIO:-0}' in LAUNCHER
+
+
+def test_runtime_uses_configured_dimensions_for_gles_window():
+    assert 'nfsmw_platform_runtime_start(display_width, display_height)' in JNI
+    assert 'NFSMW_WIDTH' in JNI
+    assert 'NFSMW_HEIGHT' in JNI
+
+
+if __name__ == '__main__':
+    test_launcher_defaults_to_panel_resolution_and_real_music_state()
+    test_runtime_uses_configured_dimensions_for_gles_window()
+    print('TSPS AV contract: PASS')

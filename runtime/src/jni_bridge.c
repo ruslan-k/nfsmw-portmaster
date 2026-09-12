@@ -27,6 +27,29 @@ enum {
     FAKE_TEXT_CAPACITY = 4096
 };
 
+static int configured_display_dimension(const char *name, int fallback)
+{
+    const char *configured = getenv(name);
+    char *end = NULL;
+    long parsed;
+
+    if (configured == NULL || configured[0] == '\0') return fallback;
+    parsed = strtol(configured, &end, 10);
+    if (end == configured || *end != '\0' || parsed < 320L ||
+        parsed > 3840L) return fallback;
+    return (int)parsed;
+}
+
+static int configured_display_width(void)
+{
+    return configured_display_dimension("NFSMW_WIDTH", 640);
+}
+
+static int configured_display_height(void)
+{
+    return configured_display_dimension("NFSMW_HEIGHT", 480);
+}
+
 /*
  * The silent FMOD bridge deliberately leaves some optional Event handles
  * empty.  libapp's event-state helper dereferences its wrapper before testing
@@ -964,8 +987,8 @@ static int dispatch_int_v(void *receiver, struct fake_method *method,
     if (strcmp(name, "getTotalMemory") == 0) return 768;
     if (strcmp(name, "getPerformanceScore") == 0)
         return (int)configured_performance_score();
-    if (strcmp(name, "getWidth") == 0) return 640;
-    if (strcmp(name, "getHeight") == 0) return 480;
+    if (strcmp(name, "getWidth") == 0) return configured_display_width();
+    if (strcmp(name, "getHeight") == 0) return configured_display_height();
     if (strcmp(name, "getPointerCount") == 0) return 1;
     return 0;
 }
@@ -1013,8 +1036,8 @@ static int jni_call_int_method_a(void *environment, void *object,
     if (strcmp(name, "getTotalMemory") == 0) return 768;
     if (strcmp(name, "getPerformanceScore") == 0)
         return (int)configured_performance_score();
-    if (strcmp(name, "getWidth") == 0) return 640;
-    if (strcmp(name, "getHeight") == 0) return 480;
+    if (strcmp(name, "getWidth") == 0) return configured_display_width();
+    if (strcmp(name, "getHeight") == 0) return configured_display_height();
     if (strcmp(name, "getPointerCount") == 0) return 1;
     return 0;
 }
@@ -1398,8 +1421,8 @@ static int jni_get_int_field(void *environment, void *object, void *field_value)
     float text_size = fake_object != NULL && fake_object->text_size > 0.0F ?
                       fake_object->text_size : 16.0F;
     (void)environment;
-    if (strcmp(name, "widthPixels") == 0) return 640;
-    if (strcmp(name, "heightPixels") == 0) return 480;
+    if (strcmp(name, "widthPixels") == 0) return configured_display_width();
+    if (strcmp(name, "heightPixels") == 0) return configured_display_height();
     if (strcmp(name, "densityDpi") == 0) return 160;
     if (strcmp(name, "ascent") == 0) return -(int)(text_size * 0.75F);
     if (strcmp(name, "descent") == 0) return (int)(text_size * 0.25F);
@@ -1817,6 +1840,8 @@ int nfsmw_jni_startup(const struct elf32_image *nimble_image,
     jni_on_load_function on_load = NULL;
     native_on_create_function on_create = NULL;
     const char *obb = getenv("NFSMW_OBB_PATH");
+    const int display_width = configured_display_width();
+    const int display_height = configured_display_height();
     int version;
 
     if (nimble_on_load_address == 0U || on_load_address == 0U ||
@@ -1827,7 +1852,8 @@ int nfsmw_jni_startup(const struct elf32_image *nimble_image,
     if (obb == NULL || obb[0] == '\0')
         obb = "main.1003128.com.ea.games.nfs13_row.obb";
     if (nfsmw_obb_open(obb, error, error_size) != 0) return -1;
-    if (nfsmw_platform_runtime_start(640, 480) != 0) {
+    (void)printf("G5-CONFIG display=%dx%d\n", display_width, display_height);
+    if (nfsmw_platform_runtime_start(display_width, display_height) != 0) {
         (void)snprintf(error, error_size, "persistent GLES startup failed");
         return -1;
     }
@@ -1933,8 +1959,8 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
     unsigned char previous[15] = { 0U };
     short previous_axes[6] = { 0, 0, 0, 0, 0, 0 };
     int have_previous_axes = 0;
-    int cursor_x = 320;
-    int cursor_y = 240;
+    int cursor_x = configured_display_width() / 2;
+    int cursor_y = configured_display_height() / 2;
     int cursor_visible = 0;
     int touch_down = 0;
     unsigned int last_motion_log = 0U;
@@ -2227,6 +2253,11 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
         if (fmod_audio_enabled != 0) {
             int sample_rate = fmod_get_info(
                 &jni_handle, &fmod_audio_device, 0);
+
+            if (sample_rate <= 0 &&
+                (frame < 10U || frame % 300U == 0U))
+                (void)printf("G8-AUDIOTRACK waiting sample-rate=%d frame=%u\n",
+                             sample_rate, frame);
 
             if (fmod_audio_started == 0 && sample_rate > 0) {
                 int dsp_length = fmod_get_info(

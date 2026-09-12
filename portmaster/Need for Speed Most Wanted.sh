@@ -155,8 +155,8 @@ if [ "$TSPS_BRIDGE" -eq 1 ]; then
         export SDL_GAMECONTROLLERCONFIG_FILE="${controlfolder:+$controlfolder/gamecontrollerdb.txt}"
         export XDG_RUNTIME_DIR=/tmp
         export TMPDIR=/tmp
-        export TSPGL_WIDTH="${NFSMW_WIDTH:-640}"
-        export TSPGL_HEIGHT="${NFSMW_HEIGHT:-480}"
+        export TSPGL_WIDTH="${NFSMW_WIDTH:-1280}"
+        export TSPGL_HEIGHT="${NFSMW_HEIGHT:-720}"
         export TSPGL_PRESENT="${NFSMW_PRESENT:-letterbox}"
         exec "$PRESENTER"
     ) &
@@ -188,8 +188,8 @@ if [ "$TSPS_BRIDGE" -eq 1 ]; then
     export SDL_NO_SIGNAL_HANDLERS=1
     export SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1
     export MALLOC_ARENA_MAX=2
-    export NFSMW_WIDTH="${NFSMW_WIDTH:-640}"
-    export NFSMW_HEIGHT="${NFSMW_HEIGHT:-480}"
+    export NFSMW_WIDTH="${NFSMW_WIDTH:-1280}"
+    export NFSMW_HEIGHT="${NFSMW_HEIGHT:-720}"
     export TSPGL_PRESENT="${NFSMW_PRESENT:-letterbox}"
     if [ -f "$HOST/libSDL2-2.0.so.0" ]; then
         export NFSMW_SDL2_LIBRARY="$HOST/libSDL2-2.0.so.0"
@@ -205,7 +205,7 @@ if [ "$TSPS_BRIDGE" -eq 1 ]; then
     export NFSMW_RUN_CONSTRUCTORS=1 NFSMW_RUN_JNI=1 NFSMW_RUN_GAME=1
     export NFSMW_TEST_FRAMES=0
     export NFSMW_PERFORMANCE_SCORE=${NFSMW_PERFORMANCE_SCORE:-20}
-    export NFSMW_SILENT_AUDIO=${NFSMW_SILENT_AUDIO:-1}
+    export NFSMW_SILENT_AUDIO=${NFSMW_SILENT_AUDIO:-0}
     export NFSMW_AUDIO_OUTPUT=${NFSMW_AUDIO_OUTPUT:-1}
     export NFSMW_OBB_PATH="$GAMEDIR/gamedata/main.1003128.com.ea.games.nfs13_row.obb"
 
@@ -242,7 +242,7 @@ else
     export NFSMW_RUN_CONSTRUCTORS=1 NFSMW_RUN_JNI=1 NFSMW_RUN_GAME=1
     export NFSMW_TEST_FRAMES=0
     export NFSMW_PERFORMANCE_SCORE=${NFSMW_PERFORMANCE_SCORE:-20}
-    export NFSMW_SILENT_AUDIO=${NFSMW_SILENT_AUDIO:-1}
+    export NFSMW_SILENT_AUDIO=${NFSMW_SILENT_AUDIO:-0}
     export NFSMW_AUDIO_OUTPUT=${NFSMW_AUDIO_OUTPUT:-1}
     export NFSMW_OBB_PATH="$GAMEDIR/gamedata/main.1003128.com.ea.games.nfs13_row.obb"
 
