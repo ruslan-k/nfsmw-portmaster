@@ -6,6 +6,7 @@
 #include <elf.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum { HOST_HANDLE_CAPACITY = 8, REPORT_NAME_CAPACITY = 96 };
@@ -189,27 +190,52 @@ bool nfsmw_symbol_requires_bionic_bridge(const char *name)
            in_list(name, exact, sizeof(exact) / sizeof(exact[0]));
 }
 
+static bool is_graphics_library(const char *name)
+{
+    return strncmp(name, "libEGL.so", 9U) == 0 ||
+           strncmp(name, "libGLESv2.so", 12U) == 0;
+}
+
 static void open_host_handles(struct host_handles *handles)
 {
     static const char *const candidates[] = {
         "libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0",
         "libEGL.so.1", "libEGL.so", "libGLESv2.so.2", "libGLESv2.so"
     };
+    const bool split_gles_bridge = getenv("TSPGL_PRESENT") != NULL;
+    bool graphics_opened = false;
     size_t index;
 
     (void)memset(handles, 0, sizeof(*handles));
     for (index = 0U;
          index < sizeof(candidates) / sizeof(candidates[0]); ++index) {
         void *handle;
+        const bool graphics = is_graphics_library(candidates[index]);
 
         if (handles->count == HOST_HANDLE_CAPACITY) {
             break;
         }
+        if (split_gles_bridge && graphics && graphics_opened) {
+            (void)printf("G3-HOST census skip duplicate proxy %s\n",
+                         candidates[index]);
+            continue;
+        }
+        (void)printf("G3-HOST census dlopen begin %s\n", candidates[index]);
+        (void)fflush(stdout);
         handle = dlopen(candidates[index], RTLD_LAZY | RTLD_LOCAL);
         if (handle != NULL) {
             handles->values[handles->count] = handle;
             handles->names[handles->count] = candidates[index];
             handles->count += 1U;
+            if (split_gles_bridge && graphics) {
+                graphics_opened = true;
+            }
+            (void)printf("G3-HOST census dlopen ok %s\n", candidates[index]);
+        } else {
+            const char *message = dlerror();
+            (void)printf("G3-HOST census dlopen fail %s: %s\n",
+                         candidates[index],
+                         message != NULL ? message : "unknown");
         }
     }
 }
