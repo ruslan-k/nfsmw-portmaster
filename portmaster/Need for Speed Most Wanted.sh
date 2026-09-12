@@ -22,7 +22,10 @@ done
 
 GAMEDIR="$SCRIPT_DIR/nfsmw"
 if [ ! -d "$GAMEDIR" ]; then
-    for candidate in "${directory:+/${directory#/}/ports/nfsmw}" \
+    for candidate in \
+        /mnt/SDCARD/Roms/PORTS/nfsmw \
+        "${directory:+${directory%/}/nfsmw}" \
+        "${directory:+/${directory#/}/ports/nfsmw}" \
         /roms/ports/nfsmw /sdcard/ports/nfsmw /mnt/mmc/ports/nfsmw; do
         [ -n "$candidate" ] && [ -d "$candidate" ] && { GAMEDIR=$candidate; break; }
     done
