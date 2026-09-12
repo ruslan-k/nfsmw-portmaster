@@ -41,13 +41,17 @@ def test_fmod_music_trace_contract():
     assert "G8-CREATE-STREAM" in TRACE
     assert "G8-FS setFileSystem" in TRACE
     assert "G8-FS open" in TRACE
+    assert "G8-FS read" in TRACE
     assert "G8-FS async-read" in TRACE
+    assert "fmod_file_read_callback" in TRACE
+    assert "user_read" in TRACE
     # The trace is diagnostic-only: every hook must delegate to the original
     # guest FMOD implementation rather than synthesize successful playback.
     assert "original_create_sound(system" in TRACE
     assert "original_create_stream(system" in TRACE
     assert "original_set_file_system(" in TRACE
     assert "original_file_open(name" in TRACE
+    assert "original_file_read(handle" in TRACE
     assert "original_file_async_read(information" in TRACE
 
 

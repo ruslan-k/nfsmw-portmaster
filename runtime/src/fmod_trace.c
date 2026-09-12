@@ -19,6 +19,9 @@ typedef fmod_result (NFSMW_GUEST_ABI *fmod_file_open_callback)(
     void **handle, void **userdata);
 typedef fmod_result (NFSMW_GUEST_ABI *fmod_file_close_callback)(
     void *handle, void *userdata);
+typedef fmod_result (NFSMW_GUEST_ABI *fmod_file_read_callback)(
+    void *handle, void *buffer, unsigned int size,
+    unsigned int *read_size, void *userdata);
 typedef fmod_result (NFSMW_GUEST_ABI *fmod_file_seek_callback)(
     void *handle, uint32_t position, void *userdata);
 typedef fmod_result (NFSMW_GUEST_ABI *fmod_file_async_read_callback)(
@@ -33,6 +36,7 @@ typedef fmod_result (NFSMW_GUEST_ABI *fmod_set_file_system_function)(
     void *system,
     fmod_file_open_callback user_open,
     fmod_file_close_callback user_close,
+    fmod_file_read_callback user_read,
     fmod_file_seek_callback user_seek,
     fmod_file_async_read_callback user_async_read,
     fmod_file_async_cancel_callback user_async_cancel,
@@ -67,7 +71,8 @@ static const char create_stream_symbol[] =
     "_ZN4FMOD6System12createStreamEPKcjP22FMOD_CREATESOUNDEXINFOPPNS_5SoundE";
 static const char set_file_system_symbol[] =
     "_ZN4FMOD6System13setFileSystemEPF11FMOD_RESULTPKciPjPPvS6_"
-    "EPFS1_S5_S5_EPFS1_S5_jS5_EPFS1_P18FMOD_ASYNCREADINFOS5_ESA_i";
+    "EPFS1_S5_S5_EPFS1_S5_S5_jS4_S5_EPFS1_S5_jS5_"
+    "EPFS1_P18FMOD_ASYNCREADINFOS5_ESA_i";
 
 static fmod_create_sound_function original_create_sound;
 static fmod_create_sound_function original_create_stream;
@@ -75,6 +80,7 @@ static fmod_set_file_system_function original_set_file_system;
 
 static fmod_file_open_callback original_file_open;
 static fmod_file_close_callback original_file_close;
+static fmod_file_read_callback original_file_read;
 static fmod_file_seek_callback original_file_seek;
 static fmod_file_async_read_callback original_file_async_read;
 static fmod_file_async_cancel_callback original_file_async_cancel;
@@ -85,6 +91,7 @@ static unsigned int create_sound_calls;
 static unsigned int create_stream_calls;
 static unsigned int file_open_calls;
 static unsigned int file_close_calls;
+static unsigned int file_read_calls;
 static unsigned int file_seek_calls;
 static unsigned int file_async_read_calls;
 static unsigned int file_async_cancel_calls;
@@ -219,6 +226,26 @@ static fmod_result NFSMW_GUEST_ABI trace_file_close(void *handle,
     return result;
 }
 
+static fmod_result NFSMW_GUEST_ABI trace_file_read(
+    void *handle, void *buffer, unsigned int size,
+    unsigned int *read_size, void *userdata)
+{
+    char path[TRACKED_PATH_CAPACITY];
+    unsigned int call = next_counter(&file_read_calls);
+    fmod_result result;
+    unsigned int actual = read_size != NULL ? *read_size : 0U;
+
+    tracked_path(handle, path, sizeof(path));
+    result = original_file_read(handle, buffer, size, read_size, userdata);
+    actual = read_size != NULL ? *read_size : actual;
+    if (sampled(call) != 0 || result != 0) {
+        (void)printf("G8-FS read call=%u path=%s handle=%p want=%u got=%u "
+                     "result=%d\n", call, path, handle, size, actual,
+                     (int)result);
+    }
+    return result;
+}
+
 static fmod_result NFSMW_GUEST_ABI trace_file_seek(void *handle,
                                                     uint32_t position,
                                                     void *userdata)
@@ -330,6 +357,7 @@ static fmod_result NFSMW_GUEST_ABI trace_set_file_system(
     void *system,
     fmod_file_open_callback user_open,
     fmod_file_close_callback user_close,
+    fmod_file_read_callback user_read,
     fmod_file_seek_callback user_seek,
     fmod_file_async_read_callback user_async_read,
     fmod_file_async_cancel_callback user_async_cancel,
@@ -339,18 +367,21 @@ static fmod_result NFSMW_GUEST_ABI trace_set_file_system(
 
     original_file_open = user_open;
     original_file_close = user_close;
+    original_file_read = user_read;
     original_file_seek = user_seek;
     original_file_async_read = user_async_read;
     original_file_async_cancel = user_async_cancel;
-    (void)printf("G8-FS setFileSystem open=%d close=%d seek=%d "
+    (void)printf("G8-FS setFileSystem open=%d close=%d read=%d seek=%d "
                  "async-read=%d async-cancel=%d block-align=%d\n",
-                 user_open != NULL, user_close != NULL, user_seek != NULL,
+                 user_open != NULL, user_close != NULL, user_read != NULL,
+                 user_seek != NULL,
                  user_async_read != NULL, user_async_cancel != NULL,
                  block_align);
     result = original_set_file_system(
         system,
         user_open != NULL ? trace_file_open : NULL,
         user_close != NULL ? trace_file_close : NULL,
+        user_read != NULL ? trace_file_read : NULL,
         user_seek != NULL ? trace_file_seek : NULL,
         user_async_read != NULL ? trace_file_async_read : NULL,
         user_async_cancel != NULL ? trace_file_async_cancel : NULL,
