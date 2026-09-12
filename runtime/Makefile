@@ -9,7 +9,7 @@ MAPPER_SOURCES := src/main.c src/elf32_loader.c src/symbol_probe.c \
                   src/softfp_bridge.c src/softfp_symbols.c \
                   src/compat_bridge.c src/initializer_trace.c \
                   src/jni_bridge.c src/obb_index.c src/opensl_bridge.c \
-                  src/crash_trace.c
+                  src/fmod_trace.c src/crash_trace.c
 MAPPER_ASM_SOURCES := src/bionic_setjmp.S
 MAPPER_OBJECTS := $(MAPPER_SOURCES:src/%.c=build/%.o) \
                   $(MAPPER_ASM_SOURCES:src/%.S=build/%.o)
