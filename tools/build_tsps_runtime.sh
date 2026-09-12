@@ -21,6 +21,7 @@ runtime_sources=(
     "$SRC/src/jni_bridge.c"
     "$SRC/src/obb_index.c"
     "$SRC/src/opensl_bridge.c"
+    "$SRC/src/fmod_trace.c"
     "$SRC/src/crash_trace.c"
     "$SRC/src/bionic_setjmp.S"
 )
