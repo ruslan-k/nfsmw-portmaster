@@ -62,6 +62,11 @@ static uintptr_t alias_lookup(const char *name)
     return 0U;
 }
 
+static int is_arm_eabi_runtime_symbol(const char *name)
+{
+    return strncmp(name, "__aeabi_", 8U) == 0;
+}
+
 static int is_graphics_library(const char *name)
 {
     return strncmp(name, "libEGL.so", 9U) == 0 ||
@@ -173,7 +178,8 @@ static uintptr_t relocation_lookup(const char *name, unsigned int binding,
             return address;
         }
     }
-    if (nfsmw_symbol_requires_softfp(name)) {
+    if (nfsmw_symbol_requires_softfp(name) ||
+        is_arm_eabi_runtime_symbol(name)) {
         address = nfsmw_softfp_resolve(name);
         if (address != 0U) {
             context->stats->softfp_resolutions += 1U;
