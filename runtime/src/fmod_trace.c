@@ -195,6 +195,13 @@ static int mp3_software_override_enabled(void)
     return configured == NULL || strcmp(configured, "0") != 0;
 }
 
+static int mp3_stream_retry_enabled(void)
+{
+    const char *configured = getenv("NFSMW_FMOD_MP3_CREATESTREAM");
+
+    return configured == NULL || strcmp(configured, "0") != 0;
+}
+
 static fmod_result NFSMW_GUEST_ABI trace_file_open(
     const char *name, int unicode, uint32_t *filesize,
     void **handle, void **userdata)
@@ -326,6 +333,8 @@ static fmod_result NFSMW_GUEST_ABI trace_create_sound(
     void *created;
     uint32_t effective_mode = mode;
     int mp3_software_override = 0;
+    int stream_retry = 0;
+    int stream_result = 0;
 
     describe_sound_source(name_or_data, mode, source, sizeof(source));
     if (strstr(source, ".mp3") != NULL &&
@@ -337,15 +346,23 @@ static fmod_result NFSMW_GUEST_ABI trace_create_sound(
     }
     result = original_create_sound(system, name_or_data, effective_mode,
                                    extra_information, sound);
+    if (result != 0 && strstr(source, ".mp3") != NULL &&
+        mp3_stream_retry_enabled() != 0 && original_create_stream != NULL) {
+        stream_retry = 1;
+        stream_result = original_create_stream(system, name_or_data,
+                                                effective_mode,
+                                                extra_information, sound);
+        if (stream_result == 0) result = stream_result;
+    }
     created = sound != NULL ? *sound : NULL;
     if (sampled(call) != 0 ||
         (strstr(source, ".mp3") != NULL && call % 128U == 0U)) {
         (void)printf("G8-CREATE-SOUND call=%u source=%s mode=0x%08x "
                      "effective=0x%08x mp3-software=%d exinfo=%p "
-                     "result=%d sound=%p\n",
+                     "stream-retry=%d stream-result=%d result=%d sound=%p\n",
                      call, source, mode, effective_mode,
                      mp3_software_override, extra_information,
-                     (int)result, created);
+                     stream_retry, stream_result, (int)result, created);
     }
     return result;
 }
