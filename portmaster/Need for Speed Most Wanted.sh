@@ -39,9 +39,20 @@ echo "uname=$(uname -a)"
 echo "platform=${PLATFORM:-unset} arch=${PLATFORM_ARCHITECTURE:-unset} cfw=${CFW_NAME:-unset}"
 
 SETUP="$GAMEDIR/setup.sh"
-chmod +x "$SETUP" "$GAMEDIR/nfsmw_runtime" 2>/dev/null || true
-if ! "$SETUP" "$GAMEDIR"; then
-    echo "NFS Most Wanted setup failed; see gamedata/README.txt"
+LIBS="$GAMEDIR/gamefiles/android-libs"
+READY="$LIBS/../.ready-1.3.128"
+if [ -f "$SETUP" ]; then
+    chmod +x "$SETUP" "$GAMEDIR/nfsmw_runtime" 2>/dev/null || true
+    if ! "$SETUP" "$GAMEDIR"; then
+        echo "NFS Most Wanted setup failed; see gamedata/README.txt"
+        sleep 8
+        command -v pm_finish >/dev/null 2>&1 && pm_finish
+        exit 1
+    fi
+elif [ -s "$LIBS/libapp.so" ] && [ -f "$READY" ]; then
+    echo "preprovisioned NFS runtime detected"
+else
+    echo "NFS Most Wanted setup.sh and preprovisioned runtime are missing"
     sleep 8
     command -v pm_finish >/dev/null 2>&1 && pm_finish
     exit 1
