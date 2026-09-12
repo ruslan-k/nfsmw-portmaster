@@ -10,6 +10,7 @@ MAIN = (ROOT / "runtime/src/main.c").read_text()
 TRACE = (ROOT / "runtime/src/fmod_trace.c").read_text()
 RELOCATION = (ROOT / "runtime/src/relocation_probe.c").read_text()
 MAKEFILE = (ROOT / "runtime/Makefile").read_text()
+BUILD_TSPS = (ROOT / "tools/build_tsps_runtime.sh").read_text()
 
 
 def test_fmod_needshardware_patch_contract():
@@ -24,6 +25,7 @@ def test_fmod_needshardware_patch_contract():
 
 def test_fmod_music_trace_contract():
     assert "src/fmod_trace.c" in MAKEFILE
+    assert '"$SRC/src/fmod_trace.c"' in BUILD_TSPS
     assert "nfsmw_fmod_trace_bind" in RELOCATION
     assert "nfsmw_fmod_trace_resolve" in RELOCATION
     # Interposition must happen before the normal guest-export lookup so the
