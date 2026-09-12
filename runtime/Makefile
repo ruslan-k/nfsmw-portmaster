@@ -13,9 +13,9 @@ MAPPER_SOURCES := src/main.c src/elf32_loader.c src/symbol_probe.c \
 MAPPER_ASM_SOURCES := src/bionic_setjmp.S
 MAPPER_OBJECTS := $(MAPPER_SOURCES:src/%.c=build/%.o) \
                   $(MAPPER_ASM_SOURCES:src/%.S=build/%.o)
-BRIDGE_SOURCES :=
+BRIDGE_SOURCES := glbridge/client.c glbridge/client_xport.c
 
-CPPFLAGS := -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -Isrc
+CPPFLAGS := -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -I. -Isrc
 CFLAGS := -std=c17 -O2 -g -fPIE -march=armv7-a -mfpu=neon \
           -mfloat-abi=hard -Wall -Wextra -Wpedantic -Wconversion \
           -Wshadow -Wformat=2 -Wno-format-nonliteral -Werror
@@ -48,7 +48,8 @@ inspect: $(TARGET)
 NDK_CC ?= $(HOME)/Library/Android/sdk/ndk/27.1.12297006/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang
 syntax-android:
 	$(NDK_CC) $(CPPFLAGS) -std=c17 -O0 -Wall -Wextra -Wpedantic \
-		-Wconversion -Wshadow -Wformat=2 -Wno-format-nonliteral -Werror \
+		-Wconversion -Wshadow -Wformat=2 -Wno-format-nonliteral \
+		-Werror -Wno-pedantic \
 		-fsyntax-only $(MAPPER_SOURCES) $(BRIDGE_SOURCES)
 
 clean:

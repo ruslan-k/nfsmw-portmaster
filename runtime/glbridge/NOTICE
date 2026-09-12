@@ -1,0 +1,5 @@
+The GLES proxy client/server sources in this directory are derived from
+star0081/D-TRIMUI_Galaxy_ON-_FIRE-_2, commit 7471aaed0f3798a6556e7d16512f9e79a536b635.
+They are used here under the MIT License; see LICENSE in the repository root.
+The bridge is game-neutral. NFS-specific behavior remains in the NFS runtime
+and launcher.

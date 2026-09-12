@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # PORTMASTER: nfsmw.zip, Need for Speed Most Wanted.sh
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
@@ -10,12 +10,12 @@ for candidate in /mnt/SDCARD/Persistent/portmaster/PortMaster \
     if [ -f "$candidate/control.txt" ]; then
         controlfolder=$candidate
         # shellcheck disable=SC1090
-        source "$controlfolder/control.txt"
+        . "$controlfolder/control.txt"
         if [ -n "${CFW_NAME:-}" ] && [ -f "$controlfolder/mod_${CFW_NAME}.txt" ]; then
             # shellcheck disable=SC1090
-            source "$controlfolder/mod_${CFW_NAME}.txt"
+            . "$controlfolder/mod_${CFW_NAME}.txt"
         fi
-        declare -F get_controls >/dev/null 2>&1 && get_controls
+        command -v get_controls >/dev/null 2>&1 && get_controls
         break
     fi
 done
@@ -79,23 +79,33 @@ trap cleanup_presenter EXIT INT TERM
 if [ "$TSPS_BRIDGE" -eq 1 ]; then
     echo "backend=tsps-32to64-gles-bridge"
 
-    # Prefer a future self-contained copy.  Fall back to the working GOF2
-    # installation so the NFS path can be tested immediately on real hardware.
+    # Prefer a self-contained NFS copy. Fall back to the working GOF2
+    # installation so the bridge can still be validated independently.
     BRIDGE_ROOT=
+    PRESENTER=
     for candidate in \
+        "$GAMEDIR" \
         "$GAMEDIR/tsps" \
         /mnt/SDCARD/Data/ports/gof2 \
         /mnt/SDCARD/Roms/ports/gof2; do
+        if [ -x "$candidate/nfsmw_present" ] && \
+           [ -f "$candidate/glbridge/libEGL.so.1" ] && \
+           [ -f "$candidate/armhf/lib/ld-linux-armhf.so.3" ]; then
+            BRIDGE_ROOT=$candidate
+            PRESENTER=$candidate/nfsmw_present
+            break
+        fi
         if [ -x "$candidate/gof2_present" ] && \
            [ -f "$candidate/glbridge/libEGL.so.1" ] && \
            [ -f "$candidate/armhf/lib/ld-linux-armhf.so.3" ]; then
             BRIDGE_ROOT=$candidate
+            PRESENTER=$candidate/gof2_present
             break
         fi
     done
     if [ -z "$BRIDGE_ROOT" ]; then
         echo "TSPS bridge missing. Expected either:"
-        echo "  $GAMEDIR/tsps/{gof2_present,glbridge,armhf,host-libs}"
+        echo "  $GAMEDIR/tsps/{nfsmw_present,glbridge,armhf,host-libs}"
         echo "or an installed GOF2 port at /mnt/SDCARD/Data/ports/gof2"
         echo "Set NFSMW_TSPS_BRIDGE=0 to force the legacy direct-GLES backend."
         exit 2
@@ -105,7 +115,6 @@ if [ "$TSPS_BRIDGE" -eq 1 ]; then
     SYS="$BRIDGE_ROOT/armhf"
     HOST="$BRIDGE_ROOT/host-libs"
     GLBRIDGE="$BRIDGE_ROOT/glbridge"
-    PRESENTER="$BRIDGE_ROOT/gof2_present"
     LIB="$GLBRIDGE:$HOST:$SYS/lib/arm-linux-gnueabihf:$SYS/lib"
 
     chmod a+x "$PRESENTER" "$LD" "$GAMEDIR/nfsmw_runtime" 2>/dev/null || true

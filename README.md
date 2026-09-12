@@ -84,6 +84,19 @@ Build the hard-float ARMv7 runtime with:
 make -C runtime
 ```
 
+For the TSPS/AArch64 graphics path, build the game-side GLES proxy and the
+64-bit presenter from the same bridge sources used by the working Galaxy on
+Fire 2 HD port:
+
+```sh
+ZIG=/path/to/zig tools/build_tsps_bridge.sh
+```
+
+To assemble a card-ready private test payload, also set
+`TSPS_BRIDGE_ROOT` to a verified GOF2 `Data/ports/gof2` directory. This copies
+only the armhf/sysroot and host-libs dependencies into the generated local
+payload; it does not add them to Git.
+
 Create the clean PortMaster archive with:
 
 ```sh

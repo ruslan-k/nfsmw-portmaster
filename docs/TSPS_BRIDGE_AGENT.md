@@ -32,9 +32,9 @@ Do not rewrite the NFS Android loader/JNI/soft-float logic unless a concrete log
 9. Never remove the legacy R36S code path merely because TSPS works.
 10. Do not increase rendering resolution above 640x480 during initial bring-up.
 
-## Current proof-of-concept behavior
+## Current implementation and proof-of-concept behavior
 
-The launcher auto-selects the bridge on spruceOS Smart Pro S. It first looks for a future self-contained NFS bridge at:
+The launcher auto-selects the bridge on spruceOS Smart Pro S. It first looks for a self-contained NFS bridge at:
 
 ```text
 ports/nfsmw/tsps/
@@ -55,7 +55,7 @@ armhf/
 host-libs/
 ```
 
-The dependency is intentional for the first hardware validation. Do not vendor or fork hundreds of kilobytes of bridge code until this path has been proven to boot NFS on the device.
+The launcher also accepts a card-ready layout directly under `ports/nfsmw/`, which is the layout used by the current TSPS test. The bridge source is now in `runtime/glbridge/`; its source attribution is recorded in `runtime/glbridge/NOTICE` and `runtime/glbridge/LICENSE`. APK, OBB, extracted Android libraries, armhf sysroot and host-libs remain outside Git.
 
 ## Phase 1 — prove the bridge with the existing GOF2 runtime assets
 
@@ -65,6 +65,9 @@ Build the normal ARMv7 NFS runtime exactly as for R36S:
 
 ```bash
 make -C runtime
+ZIG=/path/to/zig \
+TSPS_BRIDGE_ROOT=/path/to/verified/gof2/Data/ports/gof2 \
+tools/build_tsps_bridge.sh
 portmaster/build_port.sh
 ```
 
@@ -159,9 +162,9 @@ Do not block graphics bring-up on music. Preserve the existing working NFS sound
 
 Only start this phase after at least one race renders and accepts input through the TSPS bridge.
 
-### 1. Vendor the generic bridge
+### 1. Package the generic bridge
 
-Copy the generic bridge sources from the exact known-good GOF2 revision used for testing. Keep source attribution and document the source commit.
+The generic bridge sources are already copied from the exact known-good GOF2 revision used for testing. Keep source attribution and document the source commit.
 
 The relevant components are the GLES proxy client/server, protocol/op definitions and the presenter. Rename GOF2-specific output names to NFS-neutral names where practical:
 
@@ -218,6 +221,13 @@ Only after stable gameplay:
 9. Compare VSync off/on and measure frame pacing, not just average FPS.
 
 Do not optimize by reducing correctness of texture uploads, buffer mapping, FBO state or shader compilation.
+
+## Current hardware evidence
+
+The card-ready NFS layout has been launched on the TSPS. The presenter reported
+the real Mali-G57 GLES context and an X360 Controller, and all five NFS ARM32
+modules mapped. The observed run ended with exit 143 before the constructor/game
+milestones, so this is bridge bring-up evidence, not gameplay acceptance.
 
 ## Minimum acceptance criteria
 
