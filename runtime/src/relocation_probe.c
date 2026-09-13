@@ -1,6 +1,7 @@
 #include "relocation_probe.h"
 
 #include "compat_bridge.h"
+#include "fmod_trace.h"
 #include "softfp_symbols.h"
 #include "symbol_probe.h"
 
@@ -62,25 +63,55 @@ static uintptr_t alias_lookup(const char *name)
     return 0U;
 }
 
+static int is_arm_eabi_runtime_symbol(const char *name)
+{
+    return strncmp(name, "__aeabi_", 8U) == 0;
+}
+
+static int is_graphics_library(const char *name)
+{
+    return strncmp(name, "libEGL.so", 9U) == 0 ||
+           strncmp(name, "libGLESv2.so", 12U) == 0;
+}
+
 static void open_host_libraries(struct relocation_context *context)
 {
     static const char *const candidates[] = {
         "libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0",
         "libEGL.so.1", "libEGL.so", "libGLESv2.so.2", "libGLESv2.so"
     };
+    const int split_gles_bridge = getenv("TSPGL_PRESENT") != NULL;
+    int graphics_opened = 0;
     size_t index;
 
     for (index = 0U;
          index < sizeof(candidates) / sizeof(candidates[0]); ++index) {
         void *handle;
+        const int graphics = is_graphics_library(candidates[index]);
 
         if (context->host_count == RELOCATION_HOST_CAPACITY) {
             break;
         }
+        if (split_gles_bridge && graphics && graphics_opened) {
+            (void)printf("G3-REL-HOST skip duplicate proxy %s\n",
+                         candidates[index]);
+            continue;
+        }
+        (void)printf("G3-REL-HOST dlopen begin %s\n", candidates[index]);
+        (void)fflush(stdout);
         handle = dlopen(candidates[index], RTLD_LAZY | RTLD_LOCAL);
         if (handle != NULL) {
             context->host_handles[context->host_count] = handle;
             context->host_count += 1U;
+            if (split_gles_bridge && graphics) {
+                graphics_opened = 1;
+            }
+            (void)printf("G3-REL-HOST dlopen ok %s\n", candidates[index]);
+        } else {
+            const char *message = dlerror();
+            (void)printf("G3-REL-HOST dlopen fail %s: %s\n",
+                         candidates[index],
+                         message != NULL ? message : "unknown");
         }
     }
 }
@@ -137,10 +168,17 @@ static uintptr_t relocation_lookup(const char *name, unsigned int binding,
                                    void *opaque)
 {
     struct relocation_context *context = opaque;
+    const char *requesting_soname =
+        context->images[context->current_image].soname;
     uintptr_t address;
     size_t index;
 
     (void)binding;
+    address = nfsmw_fmod_trace_resolve(requesting_soname, name);
+    if (address != 0U) {
+        context->stats->alias_resolutions += 1U;
+        return address;
+    }
     for (index = 0U; index < context->current_image; ++index) {
         address = elf32_find_export(&context->images[index], name);
         if (address != 0U) {
@@ -148,7 +186,8 @@ static uintptr_t relocation_lookup(const char *name, unsigned int binding,
             return address;
         }
     }
-    if (nfsmw_symbol_requires_softfp(name)) {
+    if (nfsmw_symbol_requires_softfp(name) ||
+        is_arm_eabi_runtime_symbol(name)) {
         address = nfsmw_softfp_resolve(name);
         if (address != 0U) {
             context->stats->softfp_resolutions += 1U;
@@ -183,6 +222,7 @@ int nfsmw_relocation_probe(struct elf32_image *images, size_t image_count,
                            char *error, size_t error_size)
 {
     struct relocation_context context;
+    const struct elf32_image *fmod_image = NULL;
     size_t index;
 
     if (images == NULL || image_count == 0U || stats == NULL) {
@@ -194,6 +234,20 @@ int nfsmw_relocation_probe(struct elf32_image *images, size_t image_count,
     (void)memset(&context, 0, sizeof(context));
     context.images = images;
     context.stats = stats;
+    for (index = 0U; index < image_count; ++index) {
+        if (images[index].soname != NULL &&
+            strcmp(images[index].soname, "libfmodex.so") == 0) {
+            fmod_image = &images[index];
+            break;
+        }
+    }
+    if (fmod_image == NULL) {
+        (void)snprintf(error, error_size,
+                       "FMOD trace could not find libfmodex.so");
+        return -1;
+    }
+    if (nfsmw_fmod_trace_bind(fmod_image, error, error_size) != 0)
+        return -1;
     open_host_libraries(&context);
 
     for (index = 0U; index < image_count; ++index) {

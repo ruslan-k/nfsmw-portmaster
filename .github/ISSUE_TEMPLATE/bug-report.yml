@@ -1,6 +1,6 @@
-name: Alpha bug report
-description: Report an R36S runtime, controller, audio, or setup problem
-title: "[Alpha bug]: "
+name: Bug report
+description: Report a TrimUI Smart Pro S / SpruceOS runtime, controller, audio, or setup problem
+title: "[Bug]: "
 labels:
   - bug
 body:
@@ -12,14 +12,14 @@ body:
     id: device
     attributes:
       label: Device and firmware
-      placeholder: R36S, ArkOS version/date
+      placeholder: TrimUI Smart Pro S, SpruceOS version/date
     validations:
       required: true
   - type: input
     id: build
     attributes:
-      label: Release or mapper identity
-      placeholder: v0.1.0-alpha, mapper SHA-256/build ID if known
+      label: Release or runtime identity
+      placeholder: package version or runtime SHA-256 if known
     validations:
       required: true
   - type: textarea
@@ -39,7 +39,7 @@ body:
     id: log
     attributes:
       label: Sanitized log excerpt
-      description: Attach or paste the relevant part of ports/nfsmw/logs/nfsmw.log. Check it contains no private paths or game data.
+      description: Attach or paste the relevant part of Roms/PORTS/nfsmw/logs/nfsmw.log. Check it contains no private paths or game data.
       render: shell
   - type: checkboxes
     id: legal

@@ -6,7 +6,9 @@
 #include "softfp_bridge.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,6 +28,81 @@ enum {
     FAKE_MAGIC = 0x4a4e4932,
     FAKE_TEXT_CAPACITY = 4096
 };
+
+static int configured_display_dimension(const char *name, int fallback)
+{
+    const char *configured = getenv(name);
+    char *end = NULL;
+    long parsed;
+
+    if (configured == NULL || configured[0] == '\0') return fallback;
+    parsed = strtol(configured, &end, 10);
+    if (end == configured || *end != '\0' || parsed < 320L ||
+        parsed > 3840L) return fallback;
+    return (int)parsed;
+}
+
+static int configured_display_width(void)
+{
+    return configured_display_dimension("NFSMW_WIDTH", 640);
+}
+
+static int configured_display_height(void)
+{
+    return configured_display_dimension("NFSMW_HEIGHT", 480);
+}
+
+int nfsmw_apply_fmodex_patches(const struct elf32_image *fmod_image,
+                               char *error, size_t error_size)
+{
+    /*
+     * FMOD Ex 4.44's NDK cpu-features parser looks for 32-bit tokens
+     * (neon / vfp).  An AArch64 kernel advertises asimd/fp instead, so
+     * android_getCpuFeatures() returns zero and System_setOutput fails with
+     * NEEDSHARDWARE before its Java AudioTrack mixer can be registered.
+     * TSPS Cortex-A55 cores can execute the AArch32 NEON mixer; bypass only
+     * this stale feature-name rejection after verifying the exact words.
+     */
+    enum { CPU_NEEDSHARDWARE = 0x000a9b34U };
+    static const uint32_t expected[2] = { 0x03a05030U, 0x0a000006U };
+    static const uint32_t patched[2] = { 0xe1a00000U, 0xe1a00000U };
+    const uintptr_t check = fmod_image != NULL ?
+        fmod_image->load_bias + CPU_NEEDSHARDWARE : 0U;
+    uintptr_t page;
+    uint32_t current[2];
+
+    if (fmod_image == NULL || fmod_image->mapping == NULL ||
+        fmod_image->page_size == 0U ||
+        CPU_NEEDSHARDWARE + sizeof(current) > fmod_image->mapping_size) {
+        (void)snprintf(error, error_size, "invalid libfmodex patch image");
+        return -1;
+    }
+    (void)memcpy(current, (const void *)check, sizeof(current));
+    if (memcmp(current, expected, sizeof(current)) != 0) {
+        (void)snprintf(error, error_size,
+                       "unexpected libfmodex NEEDSHARDWARE signature");
+        return -1;
+    }
+    page = check & ~((uintptr_t)fmod_image->page_size - 1U);
+    if (mprotect((void *)page, fmod_image->page_size,
+                 PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        (void)snprintf(error, error_size,
+                       "make fmodex patch page writable: %s",
+                       strerror(errno));
+        return -1;
+    }
+    (void)memcpy((void *)check, patched, sizeof(patched));
+    __builtin___clear_cache((char *)check, (char *)check + sizeof(patched));
+    if (mprotect((void *)page, fmod_image->page_size,
+                 PROT_READ | PROT_EXEC) != 0) {
+        (void)snprintf(error, error_size,
+                       "restore fmodex patch page: %s", strerror(errno));
+        return -1;
+    }
+    (void)printf("G3-PATCH PASS FMOD NEEDSHARDWARE skip at 0x%08x\n",
+                 CPU_NEEDSHARDWARE);
+    return 0;
+}
 
 /*
  * The silent FMOD bridge deliberately leaves some optional Event handles
@@ -244,6 +321,20 @@ struct fake_object {
     float text_size;
 };
 
+typedef int (*fmod_get_info_function)(void *, void *, int);
+typedef int (*fmod_process_function)(void *, void *, void *);
+
+struct fmod_audio_worker {
+    pthread_t thread;
+    fmod_get_info_function get_info;
+    fmod_process_function process;
+    struct fake_object buffer;
+    atomic_int stop_requested;
+    atomic_int failed;
+    int created;
+    char error[160];
+};
+
 union fake_jvalue {
     unsigned char boolean_value;
     signed char byte_value;
@@ -304,14 +395,156 @@ static struct fake_object surface_view = {
     .magic = FAKE_MAGIC, .kind = FAKE_GENERIC
 };
 
+static void fmod_audio_sleep(long milliseconds)
+{
+    struct timespec delay = {
+        .tv_sec = milliseconds / 1000L,
+        .tv_nsec = (milliseconds % 1000L) * 1000000L
+    };
+
+    while (nanosleep(&delay, &delay) != 0 && errno == EINTR) {}
+}
+
+static void fmod_audio_fail(struct fmod_audio_worker *worker,
+                            const char *message)
+{
+    (void)snprintf(worker->error, sizeof(worker->error), "%s", message);
+    atomic_store_explicit(&worker->failed, 1, memory_order_release);
+}
+
+static void *fmod_audio_worker_main(void *context)
+{
+    struct fmod_audio_worker *worker = context;
+    int sample_rate = -1;
+    int mixer_state = -1;
+
+    while (atomic_load_explicit(&worker->stop_requested,
+                                memory_order_acquire) == 0) {
+        sample_rate = worker->get_info(
+            &jni_handle, &fmod_audio_device, 0);
+        if (sample_rate > 0) break;
+        fmod_audio_sleep(5L);
+    }
+    if (sample_rate > 0) {
+        int dsp_length = worker->get_info(
+            &jni_handle, &fmod_audio_device, 1);
+        int dsp_buffers = worker->get_info(
+            &jni_handle, &fmod_audio_device, 2);
+        uint64_t requested = dsp_length > 0 ?
+            (uint64_t)(unsigned int)dsp_length * 4U : 0U;
+
+        if (sample_rate > 192000 || dsp_length < 64 ||
+            dsp_length > 16384 || dsp_buffers < 1 || dsp_buffers > 32 ||
+            requested > UINT32_MAX) {
+            fmod_audio_fail(worker, "invalid FMOD AudioTrack format");
+            return NULL;
+        }
+        worker->buffer.bytes = calloc((size_t)requested, 1U);
+        if (worker->buffer.bytes == NULL ||
+            nfsmw_platform_runtime_audio_start(sample_rate, 2) != 0) {
+            free(worker->buffer.bytes);
+            worker->buffer.bytes = NULL;
+            fmod_audio_fail(worker, "FMOD AudioTrack SDL output startup failed");
+            return NULL;
+        }
+        worker->buffer.length = (size_t)requested;
+        (void)printf("G8-AUDIOWORKER PASS rate=%dHz dsp-frames=%d "
+                     "buffers=%d pcm-bytes=%u\n", sample_rate, dsp_length,
+                     dsp_buffers, (unsigned int)requested);
+    }
+
+    while (sample_rate > 0 &&
+           atomic_load_explicit(&worker->stop_requested,
+                                memory_order_acquire) == 0) {
+        int current = worker->get_info(
+            &jni_handle, &fmod_audio_device, 3);
+
+        if (current != mixer_state) {
+            (void)printf("G8-AUDIOWORKER mixer-running=%d\n", current);
+            mixer_state = current;
+        }
+        if (current == 1) {
+            const unsigned int size = (unsigned int)worker->buffer.length;
+            const unsigned int target = size * 4U;
+            unsigned int rounds = 0U;
+
+            while (nfsmw_platform_runtime_audio_queued() < target &&
+                   rounds < 8U &&
+                   atomic_load_explicit(&worker->stop_requested,
+                                        memory_order_acquire) == 0) {
+                (void)worker->process(
+                    &jni_handle, &fmod_audio_device, &worker->buffer);
+                if (nfsmw_platform_runtime_audio_queue(
+                        worker->buffer.bytes, size) != 0) {
+                    fmod_audio_fail(worker,
+                                    "FMOD AudioTrack PCM queue failed");
+                    free(worker->buffer.bytes);
+                    worker->buffer.bytes = NULL;
+                    return NULL;
+                }
+                ++rounds;
+            }
+        }
+        fmod_audio_sleep(2L);
+    }
+    free(worker->buffer.bytes);
+    worker->buffer.bytes = NULL;
+    return NULL;
+}
+
+static int fmod_audio_worker_start(struct fmod_audio_worker *worker,
+                                   fmod_get_info_function get_info,
+                                   fmod_process_function process,
+                                   char *error, size_t error_size)
+{
+    int result;
+
+    (void)memset(worker, 0, sizeof(*worker));
+    worker->get_info = get_info;
+    worker->process = process;
+    worker->buffer.magic = FAKE_MAGIC;
+    worker->buffer.kind = FAKE_DIRECT_BUFFER;
+    atomic_init(&worker->stop_requested, 0);
+    atomic_init(&worker->failed, 0);
+    result = pthread_create(&worker->thread, NULL,
+                            fmod_audio_worker_main, worker);
+    if (result != 0) {
+        (void)snprintf(error, error_size,
+                       "FMOD audio worker startup failed: %s",
+                       strerror(result));
+        return -1;
+    }
+    worker->created = 1;
+    (void)printf("G8-AUDIOWORKER thread-started\n");
+    return 0;
+}
+
+static int fmod_audio_worker_failed(struct fmod_audio_worker *worker,
+                                    char *error, size_t error_size)
+{
+    if (atomic_load_explicit(&worker->failed, memory_order_acquire) == 0)
+        return 0;
+    (void)snprintf(error, error_size, "%s", worker->error);
+    return -1;
+}
+
+static void fmod_audio_worker_stop(struct fmod_audio_worker *worker)
+{
+    if (worker->created == 0) return;
+    atomic_store_explicit(&worker->stop_requested, 1, memory_order_release);
+    (void)pthread_join(worker->thread, NULL);
+    worker->created = 0;
+    (void)printf("G8-AUDIOWORKER thread-stopped\n");
+}
+
 static struct fake_method *as_method(void *value);
 
 static float configured_performance_score(void)
 {
     static int initialized;
     /* Score 20 intentionally retains the title's highest visual tier. The
-     * R36S sustained playable frame rates with that tier once the failed
-     * music retry loop was suppressed. */
+     * The validated SpruceOS target sustains playable frame rates with that
+     * tier once the failed music retry loop was suppressed. */
     static float score = 20.0F;
 
     if (initialized == 0) {
@@ -759,7 +992,7 @@ static void *dispatch_object(void *receiver, struct fake_method *method,
     }
     if (strcmp(name, "GetDefaultLanguage") == 0) return new_string("en");
     if (strcmp(name, "GetDeviceLocale") == 0) return new_string("EN-US");
-    if (strcmp(name, "GetDeviceName") == 0) return new_string("R36S");
+    if (strcmp(name, "GetDeviceName") == 0) return new_string("TrimUI Smart Pro S");
     if (strcmp(name, "GetApplicationVersion") == 0)
         return new_string("1.3.128");
     if (strcmp(name, "getOsVersion") == 0) return new_string("4.4.4");
@@ -864,7 +1097,7 @@ static void *jni_call_object_method_a(void *environment, void *object,
     if (method != NULL && strcmp(method->name, "GetDeviceLocale") == 0)
         return new_string("EN-US");
     if (method != NULL && strcmp(method->name, "GetDeviceName") == 0)
-        return new_string("R36S");
+        return new_string("TrimUI Smart Pro S");
     if (method != NULL && strcmp(method->name, "GetApplicationVersion") == 0)
         return new_string("1.3.128");
     if (method != NULL && strcmp(method->name, "getOsVersion") == 0)
@@ -964,8 +1197,8 @@ static int dispatch_int_v(void *receiver, struct fake_method *method,
     if (strcmp(name, "getTotalMemory") == 0) return 768;
     if (strcmp(name, "getPerformanceScore") == 0)
         return (int)configured_performance_score();
-    if (strcmp(name, "getWidth") == 0) return 640;
-    if (strcmp(name, "getHeight") == 0) return 480;
+    if (strcmp(name, "getWidth") == 0) return configured_display_width();
+    if (strcmp(name, "getHeight") == 0) return configured_display_height();
     if (strcmp(name, "getPointerCount") == 0) return 1;
     return 0;
 }
@@ -1013,8 +1246,8 @@ static int jni_call_int_method_a(void *environment, void *object,
     if (strcmp(name, "getTotalMemory") == 0) return 768;
     if (strcmp(name, "getPerformanceScore") == 0)
         return (int)configured_performance_score();
-    if (strcmp(name, "getWidth") == 0) return 640;
-    if (strcmp(name, "getHeight") == 0) return 480;
+    if (strcmp(name, "getWidth") == 0) return configured_display_width();
+    if (strcmp(name, "getHeight") == 0) return configured_display_height();
     if (strcmp(name, "getPointerCount") == 0) return 1;
     return 0;
 }
@@ -1398,8 +1631,8 @@ static int jni_get_int_field(void *environment, void *object, void *field_value)
     float text_size = fake_object != NULL && fake_object->text_size > 0.0F ?
                       fake_object->text_size : 16.0F;
     (void)environment;
-    if (strcmp(name, "widthPixels") == 0) return 640;
-    if (strcmp(name, "heightPixels") == 0) return 480;
+    if (strcmp(name, "widthPixels") == 0) return configured_display_width();
+    if (strcmp(name, "heightPixels") == 0) return configured_display_height();
     if (strcmp(name, "densityDpi") == 0) return 160;
     if (strcmp(name, "ascent") == 0) return -(int)(text_size * 0.75F);
     if (strcmp(name, "descent") == 0) return (int)(text_size * 0.25F);
@@ -1817,6 +2050,8 @@ int nfsmw_jni_startup(const struct elf32_image *nimble_image,
     jni_on_load_function on_load = NULL;
     native_on_create_function on_create = NULL;
     const char *obb = getenv("NFSMW_OBB_PATH");
+    const int display_width = configured_display_width();
+    const int display_height = configured_display_height();
     int version;
 
     if (nimble_on_load_address == 0U || on_load_address == 0U ||
@@ -1827,7 +2062,8 @@ int nfsmw_jni_startup(const struct elf32_image *nimble_image,
     if (obb == NULL || obb[0] == '\0')
         obb = "main.1003128.com.ea.games.nfs13_row.obb";
     if (nfsmw_obb_open(obb, error, error_size) != 0) return -1;
-    if (nfsmw_platform_runtime_start(640, 480) != 0) {
+    (void)printf("G5-CONFIG display=%dx%d\n", display_width, display_height);
+    if (nfsmw_platform_runtime_start(display_width, display_height) != 0) {
         (void)snprintf(error, error_size, "persistent GLES startup failed");
         return -1;
     }
@@ -1875,8 +2111,6 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
     typedef void *(*native_controller_instance_function)(void);
     typedef void (NFSMW_SOFTFP *native_touch_function)(
         void *, void *, int, int, float, float);
-    typedef int (*fmod_get_info_function)(void *, void *, int);
-    typedef int (*fmod_process_function)(void *, void *, void *);
     uintptr_t surface_created_address = required_export(app_image,
         "Java_com_ea_ironmonkey_GameActivityMain_nativeSurfaceCreated",
         error, error_size);
@@ -1933,8 +2167,8 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
     unsigned char previous[15] = { 0U };
     short previous_axes[6] = { 0, 0, 0, 0, 0, 0 };
     int have_previous_axes = 0;
-    int cursor_x = 320;
-    int cursor_y = 240;
+    int cursor_x = configured_display_width() / 2;
+    int cursor_y = configured_display_height() / 2;
     int cursor_visible = 0;
     int touch_down = 0;
     unsigned int last_motion_log = 0U;
@@ -1943,13 +2177,8 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
     unsigned int frame_limit = 18000U;
     unsigned int start_ticks;
     unsigned int frame;
-    struct fake_object fmod_buffer = {
-        .magic = FAKE_MAGIC, .kind = FAKE_DIRECT_BUFFER
-    };
+    struct fmod_audio_worker fmod_worker;
     int fmod_audio_enabled = audio_output_enabled();
-    int fmod_audio_started = 0;
-    int fmod_mixer_state = -1;
-    unsigned int fmod_buffer_size = 0U;
     void *controller_state;
     const char *configured_limit = getenv("NFSMW_TEST_FRAMES");
 
@@ -1987,7 +2216,7 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
                      sizeof(fmod_get_info));
         (void)memcpy(&fmod_process, &fmod_process_address,
                      sizeof(fmod_process));
-        (void)printf("G8-AUDIOTRACK native Java mixer replacement enabled\n");
+        (void)printf("G8-AUDIOWORKER Java mixer replacement enabled\n");
     }
     if (configured_limit != NULL && configured_limit[0] != '\0') {
         unsigned long parsed = strtoul(configured_limit, NULL, 10);
@@ -2029,6 +2258,11 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
                        "MOGA controller singleton is unavailable");
         return -1;
     }
+    (void)memset(&fmod_worker, 0, sizeof(fmod_worker));
+    if (fmod_audio_enabled != 0 &&
+        fmod_audio_worker_start(&fmod_worker, fmod_get_info, fmod_process,
+                                error, error_size) != 0)
+        return -1;
     for (frame = 0U; frame_limit == 0U || frame < frame_limit; ++frame) {
         short axes[6];
         unsigned char buttons[15];
@@ -2100,9 +2334,11 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
             cursor_x += cursor_dx;
             cursor_y += cursor_dy;
             if (cursor_x < 8) cursor_x = 8;
-            if (cursor_x > 631) cursor_x = 631;
+            if (cursor_x > configured_display_width() - 9)
+                cursor_x = configured_display_width() - 9;
             if (cursor_y < 8) cursor_y = 8;
-            if (cursor_y > 471) cursor_y = 471;
+            if (cursor_y > configured_display_height() - 9)
+                cursor_y = configured_display_height() - 9;
             direct_steering = 0.0F;
             direct_vertical = 0.0F;
         }
@@ -2213,81 +2449,10 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
         if (frame < 10U || frame % 300U == 0U)
             (void)printf("G7-FRAME enter=%u\n", frame);
         tick(&jni_handle, &run_loop);
-        /*
-         * FMOD Ex on this APK uses its Java AudioTrack backend. Android's
-         * GameActivityMain starts org.fmod.FMODAudioDevice after onResume;
-         * that Java thread allocates a direct ByteBuffer, calls fmodProcess,
-         * and writes the resulting signed 16-bit stereo PCM to AudioTrack.
-         *
-         * This loader intentionally enters the native activity without a VM,
-         * so reproduce that small pull loop here and feed the already proven
-         * SDL/ALSA queue. The original FMOD mixer, event banks, 3D audio, and
-         * all game-side sound logic remain untouched.
-         */
-        if (fmod_audio_enabled != 0) {
-            int sample_rate = fmod_get_info(
-                &jni_handle, &fmod_audio_device, 0);
-
-            if (fmod_audio_started == 0 && sample_rate > 0) {
-                int dsp_length = fmod_get_info(
-                    &jni_handle, &fmod_audio_device, 1);
-                int dsp_buffers = fmod_get_info(
-                    &jni_handle, &fmod_audio_device, 2);
-                uint64_t requested = dsp_length > 0 ?
-                    (uint64_t)(unsigned int)dsp_length * 4U : 0U;
-
-                if (sample_rate > 192000 || dsp_length < 64 ||
-                    dsp_length > 16384 || dsp_buffers < 1 ||
-                    dsp_buffers > 32 || requested > UINT32_MAX) {
-                    (void)snprintf(error, error_size,
-                                   "invalid FMOD AudioTrack format "
-                                   "rate=%d length=%d buffers=%d",
-                                   sample_rate, dsp_length, dsp_buffers);
-                    return -1;
-                }
-                fmod_buffer_size = (unsigned int)requested;
-                fmod_buffer.bytes = calloc(fmod_buffer_size, 1U);
-                if (fmod_buffer.bytes == NULL ||
-                    nfsmw_platform_runtime_audio_start(sample_rate, 2) != 0) {
-                    (void)snprintf(error, error_size,
-                                   "FMOD AudioTrack SDL output startup failed");
-                    return -1;
-                }
-                fmod_buffer.length = fmod_buffer_size;
-                fmod_audio_started = 1;
-                (void)printf("G8-AUDIOTRACK PASS rate=%dHz "
-                             "dsp-frames=%d buffers=%d pcm-bytes=%u\n",
-                             sample_rate, dsp_length, dsp_buffers,
-                             fmod_buffer_size);
-            }
-            if (fmod_audio_started != 0) {
-                int mixer_running = fmod_get_info(
-                    &jni_handle, &fmod_audio_device, 3);
-
-                if (mixer_running != fmod_mixer_state) {
-                    (void)printf("G8-AUDIOTRACK mixer-running=%d frame=%u\n",
-                                 mixer_running, frame);
-                    fmod_mixer_state = mixer_running;
-                }
-                if (mixer_running == 1 &&
-                    nfsmw_platform_runtime_audio_queued() <=
-                        fmod_buffer_size * 2U) {
-                    int process_result = fmod_process(
-                        &jni_handle, &fmod_audio_device, &fmod_buffer);
-
-                    if (process_result != 0 && frame < 60U)
-                        (void)printf("G8-AUDIOTRACK process-result=%d "
-                                     "frame=%u\n", process_result, frame);
-                    if (nfsmw_platform_runtime_audio_queue(
-                            fmod_buffer.bytes, fmod_buffer_size) != 0) {
-                        (void)snprintf(error, error_size,
-                                       "FMOD AudioTrack PCM queue failed");
-                        return -1;
-                    }
-                }
-            }
+        if (fmod_audio_worker_failed(&fmod_worker, error, error_size) != 0) {
+            fmod_audio_worker_stop(&fmod_worker);
+            return -1;
         }
-        nfsmw_opensl_pump();
         nfsmw_platform_runtime_present(frame, cursor_x, cursor_y,
                                        cursor_visible);
         if (frame < 10U || frame % 300U == 0U)
@@ -2298,6 +2463,7 @@ int nfsmw_jni_run(const struct elf32_image *fmod_image,
             break;
         }
     }
+    fmod_audio_worker_stop(&fmod_worker);
     {
         unsigned int elapsed = nfsmw_platform_runtime_ticks() - start_ticks;
         double fps = elapsed != 0U ? (double)frame * 1000.0 / (double)elapsed : 0.0;

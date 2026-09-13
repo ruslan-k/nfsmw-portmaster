@@ -11,6 +11,7 @@ sd-test/
 **/dist/
 **/nfsmw_mapper
 **/nfsmw_runtime
+portmaster/nfsmw/tsps/*
 *.o
 __pycache__/
 *.pyc

@@ -1,37 +1,43 @@
-# ARM32 runtime
+# ARMHF runtime
 
-The runtime has passed gates G2 and G3 on the R36S. Its combined test
-repeats strict mapping, inventories target-side symbol providers, checks the
-independent SDL/KMSDRM GLES, controller and SDL/ALSA audio paths, then applies
-ARM `REL` relocations using mapped guest libraries, soft-float thunks, host
-providers and explicit Bionic/Android compatibility bridges.
+This runtime is the ARMv7 guest component of the TrimUI Smart Pro S / SpruceOS port. The device uses an AArch64 presenter and GLES bridge; the original Android ARMv7 libraries remain in the guest address space.
 
-Setting `NFSMW_RUN_CONSTRUCTORS=1` additionally calls `DT_INIT` and
-`DT_INIT_ARRAY` functions in dependency order with an enter/leave trace around
-each call. After a clean return it runs registered C++ destructors and ELF
-finalizers in reverse order. Setting `NFSMW_RUN_JNI=1` additionally calls
-`JNI_OnLoad` and `nativeOnCreate` through the bounded fake JavaVM/JNIEnv;
-unknown JNI calls fail loudly with their guest return address. OBB access is
-still disabled.
+The combined runtime path maps the guest libraries, inventories host symbol providers, applies ARM relocations, provides soft-float thunks, and supplies the required Bionic/Android compatibility bridges. Constructor/JNI tracing and OBB indexing are enabled by the launcher for the supported game version.
 
-Build on an armhf Linux host (or in an armhf cross-build environment):
+Build on an ARMHF Linux host or in the documented Debian cross-build environment:
 
 ```sh
 make
 build/nfsmw_mapper /path/to/gamefiles/android-libs
 ```
 
-Expected successful combined output ends with:
+Build output is an ELF32 ARM EABI5 PIE executable with `/lib/ld-linux-armhf.so.3` as interpreter. It is not an AArch64 binary and must not be replaced with a host-native executable.
 
-```text
-COMBINED PASS: mapping, provider census, host preflights and relocation phase A completed
+For the reproducible cross-build used for the validated device package:
+
+```sh
+podman run --rm --security-opt label=disable \
+  -v "$PWD:/src:Z" docker.io/library/debian:bookworm-slim bash -lc \
+  'apt-get update -qq && apt-get install -y -qq make gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf && make -C /src/runtime clean all CROSS=arm-linux-gnueabihf-'
 ```
 
-`make syntax-android` is a source-only check for macOS machines with the
-Android NDK already installed. Its output is an Android binary if linked and
-must not be shipped as the R36S runtime.
+The runtime includes an environment-gated read-only `/proc/cpuinfo` compatibility view. The launcher keeps `NFSMW_ARM32_CPUINFO_COMPAT=1` for the validated SpruceOS path.
 
-The next stage grows the fake JavaVM/JNIEnv from target startup traces. Do not
-extend this mapper by copying the
-section-header-based loader from the CTW experiment: Android release binaries
-may omit section headers, and runtime linking data belongs in `PT_DYNAMIC`.
+## FMOD music path
+
+The bundled FMOD Ex library reports version `0x00044006` (FMOD Ex 4.40.06). Its ARM32 `FMOD_CREATESOUNDEXINFO` is 136 bytes, with `length` at offset `0x04`. Native music uses:
+
+```text
+FMOD_SOFTWARE | FMOD_CREATESTREAM | FMOD_OPENMEMORY = 0x000008c0
+```
+
+The runtime loads all `/published/sounds/music/*.mp3` tracks through the working guest callbacks, passes each track to FMOD as compressed memory, and retains each buffer until process exit. This is native FMOD MP3 playback. No WAV or PCM soundtrack conversion is used.
+
+## Checks
+
+```sh
+python3 tools/test_fmod_audio_contract.py path/to/libfmodex.so
+python3 tools/test_tsps_av_contract.py
+bash -n 'portmaster/Need for Speed Most Wanted.sh'
+git diff --check
+```

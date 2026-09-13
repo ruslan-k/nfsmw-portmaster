@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 TrimUI Smart Pro S / SpruceOS NFS MW compatibility project contributors
+Copyright (c) 2026 star0081
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,8 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-This license covers only the compatibility code and packaging in this port.
-Need for Speed, its executable libraries, data, artwork, audio, trademarks,
-and other original game content remain the property of their respective
-owners and are not included under this license.

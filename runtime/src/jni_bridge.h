@@ -9,6 +9,8 @@
 int nfsmw_jni_startup(const struct elf32_image *nimble_image,
                       const struct elf32_image *app_image,
                       char *error, size_t error_size);
+int nfsmw_apply_fmodex_patches(const struct elf32_image *fmod_image,
+                               char *error, size_t error_size);
 int nfsmw_apply_app_patches(const struct elf32_image *app_image,
                             char *error, size_t error_size);
 int nfsmw_jni_run(const struct elf32_image *fmod_image,

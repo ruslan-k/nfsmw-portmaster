@@ -1,33 +1,31 @@
 Need for Speed: Most Wanted (2012 Android) compatibility port
 =============================================================
 
-Thank you to the PortMaster project, the R36S and Linux handheld community,
-and everyone who tested the ARMv7, GLES2, controller, and audio compatibility
-work on real hardware.
+Validated target: TrimUI Smart Pro S running SpruceOS.
 
-This package contains no Electronic Arts game data. You must supply the
-supported legally obtained version 1.3.128 APK and OBB; see gamedata/README.txt
-for setup instructions.
+This package contains no Electronic Arts game data. Supply the supported
+legally obtained Android version 1.3.128 APK and OBB in gamedata/.
+
+The first launch verifies the APK/OBB hashes and extracts only the five
+required ARMv7 libraries. The OBB stays compressed.
 
 Controls
 --------
 Left stick: steering and map movement
-D-pad: native MOGA menu navigation
-A: accept/drift
+D-pad: menu navigation
+A: accept / drift
 B: back
-L1: brake/reverse
+L1: brake / reverse
 R1: nitrous
 L1/R1 in menus: change top-level section
-Start: pause and map selection
+Start: pause / map selection
 Select+Start: exit to PortMaster
 
-Sound effects are supported. The soundtrack is disabled in this release
-because the original Android MP3 path repeatedly fails on Linux and cuts the
-frame rate roughly in half.
+Sound effects and native FMOD MP3 music are supported. Music works during
+loading, in the front end, and during races.
 
-PUBLIC ALPHA LIMITATION
------------------------
-On the pre-race car-selection/purchase screen, A works only during the short
-rollout window. If it stops working, press B to leave, A to re-enter, then A
-again immediately. The later modifications screen works normally with D-pad
-and A. Select toggles an experimental cursor, but its taps are not functional.
+Known gameplay workaround
+--------------------------
+On the pre-race car-selection or purchase screen, press B to leave, A to
+re-enter, then A again during the short rollout window. The later modifications
+screen works normally with D-pad and A.

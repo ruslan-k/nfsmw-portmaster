@@ -13,6 +13,30 @@ struct softfp_symbol {
 #define SOFTFP_SYMBOL(guest_name, bridge_name) \
     { guest_name, (uintptr_t)&bridge_name }
 
+/*
+ * nfsmw_runtime itself is an ARM32/armhf process.  The Android guest DSOs are
+ * ARM32 too, but some of them import ARM EABI runtime helpers that are not
+ * exported by glibc.  Resolve those imports to the implementation supplied by
+ * the ARM Linux toolchain runtime (libgcc/compiler-rt) linked into this same
+ * process.  These are the ABI-defined entry points, which is especially
+ * important for the *divmod helpers whose results span multiple core
+ * registers; replacing them with ordinary C functions would not be safe.
+ *
+ * Use private C identifiers with assembler names so we only take the helper
+ * addresses; their C prototypes are deliberately irrelevant here.
+ */
+extern void nfsmw_rt_aeabi_uidiv(void) __asm__("__aeabi_uidiv");
+extern void nfsmw_rt_aeabi_ui2d(void) __asm__("__aeabi_ui2d");
+extern void nfsmw_rt_aeabi_uidivmod(void) __asm__("__aeabi_uidivmod");
+extern void nfsmw_rt_aeabi_uldivmod(void) __asm__("__aeabi_uldivmod");
+extern void nfsmw_rt_aeabi_dmul(void) __asm__("__aeabi_dmul");
+extern void nfsmw_rt_aeabi_dcmplt(void) __asm__("__aeabi_dcmplt");
+extern void nfsmw_rt_aeabi_f2d(void) __asm__("__aeabi_f2d");
+extern void nfsmw_rt_aeabi_ul2d(void) __asm__("__aeabi_ul2d");
+extern void nfsmw_rt_aeabi_idivmod(void) __asm__("__aeabi_idivmod");
+extern void nfsmw_rt_aeabi_idiv(void) __asm__("__aeabi_idiv");
+extern void nfsmw_rt_aeabi_dadd(void) __asm__("__aeabi_dadd");
+
 static const struct softfp_symbol symbols[] = {
     SOFTFP_SYMBOL("glBlendColor", nfsmw_glBlendColor),
     SOFTFP_SYMBOL("glClearColor", nfsmw_glClearColor),
@@ -63,6 +87,17 @@ static const struct softfp_symbol symbols[] = {
     SOFTFP_SYMBOL("strtod", nfsmw_strtod),
     SOFTFP_SYMBOL("tan", nfsmw_tan),
     SOFTFP_SYMBOL("tanf", nfsmw_tanf),
+    SOFTFP_SYMBOL("__aeabi_uidiv", nfsmw_rt_aeabi_uidiv),
+    SOFTFP_SYMBOL("__aeabi_ui2d", nfsmw_rt_aeabi_ui2d),
+    SOFTFP_SYMBOL("__aeabi_uidivmod", nfsmw_rt_aeabi_uidivmod),
+    SOFTFP_SYMBOL("__aeabi_uldivmod", nfsmw_rt_aeabi_uldivmod),
+    SOFTFP_SYMBOL("__aeabi_dmul", nfsmw_rt_aeabi_dmul),
+    SOFTFP_SYMBOL("__aeabi_dcmplt", nfsmw_rt_aeabi_dcmplt),
+    SOFTFP_SYMBOL("__aeabi_f2d", nfsmw_rt_aeabi_f2d),
+    SOFTFP_SYMBOL("__aeabi_ul2d", nfsmw_rt_aeabi_ul2d),
+    SOFTFP_SYMBOL("__aeabi_idivmod", nfsmw_rt_aeabi_idivmod),
+    SOFTFP_SYMBOL("__aeabi_idiv", nfsmw_rt_aeabi_idiv),
+    SOFTFP_SYMBOL("__aeabi_dadd", nfsmw_rt_aeabi_dadd),
 };
 
 uintptr_t nfsmw_softfp_resolve(const char *name)
