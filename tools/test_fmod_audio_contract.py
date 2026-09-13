@@ -11,6 +11,7 @@ TRACE = (ROOT / "runtime/src/fmod_trace.c").read_text()
 RELOCATION = (ROOT / "runtime/src/relocation_probe.c").read_text()
 MAKEFILE = (ROOT / "runtime/Makefile").read_text()
 BUILD_TSPS = (ROOT / "tools/build_tsps_runtime.sh").read_text()
+LAUNCHER = (ROOT / "portmaster/Need for Speed Most Wanted.sh").read_text()
 
 
 def test_fmod_needshardware_patch_contract():
@@ -41,7 +42,7 @@ def test_fmod_music_trace_contract():
     assert "FMOD_HARDWARE_VALUE = 0x00000020U" in TRACE
     assert "FMOD_SOFTWARE_VALUE = 0x00000040U" in TRACE
     assert "NFSMW_FMOD_MP3_SOFTWARE" in TRACE
-    assert "effective_mode = (mode & ~FMOD_HARDWARE_VALUE)" in TRACE
+    assert "effective_mode = (mode & ~(uint32_t)FMOD_HARDWARE_VALUE)" in TRACE
     assert "NFSMW_FMOD_MP3_CREATESTREAM" in TRACE
     assert "original_create_stream(system, name_or_data" in TRACE
     assert "effective_mode" in TRACE
@@ -63,6 +64,73 @@ def test_fmod_music_trace_contract():
     assert "original_file_async_read(information" in TRACE
 
 
+def test_fmod_44006_memory_ab_contract():
+    compact = " ".join(TRACE.split())
+    assert "struct fmod_44006_exinfo_arm32" in TRACE
+    assert "FMOD_44006_EXINFO_SIZE = 136U" in TRACE
+    assert "FMOD_CREATESTREAM_VALUE = 0x00000080U" in TRACE
+    assert "FMOD_OPENMEMORY_VALUE = 0x00000800U" in TRACE
+    assert "FMOD_MEMORY_MODE = 0x000008c0U" in TRACE
+    assert "offsetof(struct fmod_44006_exinfo_arm32, length) == 0x04" in compact
+    assert "offsetof(struct fmod_44006_exinfo_arm32, suggestedsoundtype) == 0x48" in compact
+    assert "offsetof(struct fmod_44006_exinfo_arm32, useropen) == 0x4c" in compact
+    assert "offsetof(struct fmod_44006_exinfo_arm32, initialseekposition) == 0x6c" in compact
+    assert "offsetof(struct fmod_44006_exinfo_arm32, ignoresetfilesystem) == 0x74" in compact
+    assert "offsetof(struct fmod_44006_exinfo_arm32, nonblockthreadid) == 0x84" in compact
+    assert "NFSMW_FMOD_MP3_MEMORY_AB" in TRACE
+    assert "NFSMW_FMOD_MP3_MEMORY_TARGET" in TRACE
+    assert "NFSMW_FMOD_MP3_MEMORY_ALL" in TRACE
+    assert '"/published/sounds/music/loading_01.mp3"' in TRACE
+    assert "mp3_memory_ab_target()" in TRACE
+    assert "mp3_memory_ab_source_enabled" in TRACE
+    assert "FMOD_MEMORY_AB_ASSET_CAPACITY = 32U" in TRACE
+    assert "FMOD_MEMORY_AB_MAX_SIZE" in TRACE
+    assert "strcmp(source, mp3_memory_ab_target()) == 0" in TRACE
+    assert "mode != 0x000000a0U || extra_information != NULL" in TRACE
+    assert "G8-MP3-MEMAB refused" in TRACE
+    assert "G8-MP3-MEMAB load-complete" in TRACE
+    assert "G8-MP3-MEMAB create-begin" in TRACE
+    assert "G8-MP3-MEMAB create-end" in TRACE
+    assert "asset->attempted = 1" in TRACE
+    assert LAUNCHER.count(
+        "export NFSMW_FMOD_MP3_MEMORY_AB=${NFSMW_FMOD_MP3_MEMORY_AB:-1}"
+    ) == 2
+    assert LAUNCHER.count(
+        "export NFSMW_FMOD_MP3_MEMORY_TARGET=${NFSMW_FMOD_MP3_MEMORY_TARGET:-/published/sounds/music/loading_01.mp3}"
+    ) == 2
+    assert LAUNCHER.count(
+        "export NFSMW_FMOD_MP3_MEMORY_ALL=${NFSMW_FMOD_MP3_MEMORY_ALL:-1}"
+    ) == 2
+    assert LAUNCHER.count(
+        "export NFSMW_ARM32_CPUINFO_COMPAT=${NFSMW_ARM32_CPUINFO_COMPAT:-1}"
+    ) == 2
+    assert "original_create_sound(system," in TRACE
+    # The memory A/B is a single createSound call with explicit stream semantics;
+    # the pre-existing createStream retry must be bypassed for this branch.
+    memory_branch = TRACE[TRACE.index("static fmod_result try_mp3_memory_ab") :]
+    memory_branch = memory_branch[: memory_branch.index("static fmod_result", 20)]
+    assert "original_create_stream" not in memory_branch
+
+
+def test_fmod_44006_async_completion_contract():
+    compact = " ".join(TRACE.split())
+    assert "struct fmod_async_read_info_44006" in TRACE
+    assert "FMOD_44006_ASYNCINFO_SIZE = 32U" in TRACE
+    assert "sizeof(struct fmod_async_read_info_44006) ==" in TRACE
+    assert "offsetof(struct fmod_async_read_info_44006, buffer) == 0x10" in compact
+    assert "offsetof(struct fmod_async_read_info_44006, bytesread) == 0x14" in compact
+    assert "offsetof(struct fmod_async_read_info_44006, completion_result) == 0x18" in compact
+    assert "offsetof(struct fmod_async_read_info_44006, userdata) == 0x1c" in compact
+    assert "G8-FS async-read before" in TRACE
+    assert "G8-FS async-read after" in TRACE
+    assert "bytesread=%u completion-result=%d" in TRACE
+    assert "NFSMW_FMOD_ASYNC_EOF_OK" in TRACE
+    assert "G8-FS async-read eof-normalized" in TRACE
+    assert LAUNCHER.count(
+        "export NFSMW_FMOD_ASYNC_EOF_OK=${NFSMW_FMOD_ASYNC_EOF_OK:-1}"
+    ) == 2
+
+
 def test_captured_fmod_signature(path):
     # The shipped ELF has p_vaddr == p_offset for the executable PT_LOAD.
     data = Path(path).read_bytes()
@@ -73,6 +141,8 @@ def test_captured_fmod_signature(path):
 if __name__ == "__main__":
     test_fmod_needshardware_patch_contract()
     test_fmod_music_trace_contract()
+    test_fmod_44006_memory_ab_contract()
+    test_fmod_44006_async_completion_contract()
     if len(sys.argv) > 1:
         test_captured_fmod_signature(sys.argv[1])
     print("FMOD audio contract: PASS")

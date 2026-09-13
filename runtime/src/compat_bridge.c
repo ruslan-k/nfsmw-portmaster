@@ -5,6 +5,7 @@
 #include <dlfcn.h>
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <sched.h>
 #include <semaphore.h>
@@ -28,6 +29,8 @@
 #endif
 
 enum { BIONIC_FILE_SIZE = 84, BIONIC_DIRENT_NAME = 256 };
+
+enum { CPUINFO_TEXT_CAPACITY = 512 };
 
 enum { ATEXIT_CAPACITY = 512 };
 
@@ -58,6 +61,142 @@ static const int16_t *tolower_pointer = &tolower_storage[1];
 static struct compat_atexit_entry atexit_entries[ATEXIT_CAPACITY];
 static size_t atexit_count;
 static pthread_mutex_t atexit_lock = PTHREAD_MUTEX_INITIALIZER;
+
+struct compat_memory_file {
+    const unsigned char *data;
+    size_t size;
+    size_t position;
+    bool open;
+};
+
+static const unsigned char cpuinfo_text[] =
+    "Processor       : ARMv7 Processor rev 0 (v7l)\n"
+    "Features        : half thumb fastmult vfp edsp neon vfpv3 tls vfpv4 "
+    "idiva idivt\n"
+    "CPU architecture: 7\n";
+static struct compat_memory_file cpuinfo_file;
+static int cpuinfo_descriptor = -1;
+
+_Static_assert(sizeof(cpuinfo_text) < CPUINFO_TEXT_CAPACITY,
+               "synthetic cpuinfo text exceeds its documented bound");
+
+static int cpuinfo_compat_enabled(void)
+{
+    const char *configured = getenv("NFSMW_ARM32_CPUINFO_COMPAT");
+
+    return configured != NULL && strcmp(configured, "1") == 0;
+}
+
+static int is_cpuinfo_file(void *stream)
+{
+    return stream == (void *)&cpuinfo_file;
+}
+
+static int is_cpuinfo_descriptor(int descriptor)
+{
+    return descriptor == cpuinfo_descriptor && descriptor >= 0;
+}
+
+static int cpuinfo_seek(int64_t offset, int origin)
+{
+    int64_t base;
+    int64_t target;
+
+    if (!cpuinfo_file.open) {
+        errno = EBADF;
+        return -1;
+    }
+    if (origin == SEEK_SET) {
+        base = 0;
+    } else if (origin == SEEK_CUR) {
+        base = (int64_t)cpuinfo_file.position;
+    } else if (origin == SEEK_END) {
+        base = (int64_t)cpuinfo_file.size;
+    } else {
+        errno = EINVAL;
+        return -1;
+    }
+    target = base + offset;
+    if (target < 0 || (uint64_t)target > (uint64_t)cpuinfo_file.size) {
+        errno = EINVAL;
+        return -1;
+    }
+    cpuinfo_file.position = (size_t)target;
+    return 0;
+}
+
+static int compat_open(const char *path, int flags, ...)
+{
+    mode_t mode = 0;
+
+    if (cpuinfo_compat_enabled() != 0 && path != NULL &&
+        strcmp(path, "/proc/cpuinfo") == 0 &&
+        (flags & (O_WRONLY | O_RDWR | O_CREAT | O_TRUNC | O_APPEND)) == 0) {
+        cpuinfo_file.data = cpuinfo_text;
+        cpuinfo_file.size = sizeof(cpuinfo_text) - 1U;
+        cpuinfo_file.position = 0U;
+        cpuinfo_file.open = true;
+        cpuinfo_descriptor = 0x40000000;
+        (void)printf("G8-CPUINFO-COMPAT open-fd path=/proc/cpuinfo "
+                     "fd=%d size=%zu flags=0x%x\n",
+                     cpuinfo_descriptor, cpuinfo_file.size,
+                     (unsigned int)flags);
+        return cpuinfo_descriptor;
+    }
+    if ((flags & O_CREAT) != 0) {
+        va_list arguments;
+
+        va_start(arguments, flags);
+        mode = (mode_t)va_arg(arguments, int);
+        va_end(arguments);
+    }
+    return open(path, flags, mode);
+}
+
+static ssize_t compat_read(int descriptor, void *buffer, size_t count)
+{
+    size_t available;
+    size_t copied;
+
+    if (is_cpuinfo_descriptor(descriptor) == 0)
+        return read(descriptor, buffer, count);
+    if (!cpuinfo_file.open) {
+        errno = EBADF;
+        return -1;
+    }
+    available = cpuinfo_file.size - cpuinfo_file.position;
+    copied = count < available ? count : available;
+    if (copied != 0U) {
+        (void)memcpy(buffer, cpuinfo_file.data + cpuinfo_file.position,
+                     copied);
+        cpuinfo_file.position += copied;
+    }
+    return (ssize_t)copied;
+}
+
+static int32_t compat_lseek(int descriptor, int32_t offset, int origin)
+{
+    if (is_cpuinfo_descriptor(descriptor) != 0) {
+        if (cpuinfo_seek((int64_t)offset, origin) != 0) return -1;
+        return (int32_t)cpuinfo_file.position;
+    }
+    return (int32_t)lseek(descriptor, (off_t)offset, origin);
+}
+
+static int compat_close(int descriptor)
+{
+    if (is_cpuinfo_descriptor(descriptor) != 0) {
+        if (!cpuinfo_file.open) {
+            errno = EBADF;
+            return -1;
+        }
+        cpuinfo_file.open = false;
+        cpuinfo_file.position = 0U;
+        cpuinfo_descriptor = -1;
+        return 0;
+    }
+    return close(descriptor);
+}
 
 static void *compat_dlopen(const char *name, int flags)
 {
@@ -222,13 +361,110 @@ static FILE *host_stream(void *guest)
     return (FILE *)guest;
 }
 
-static int compat_fclose(void *stream) { return fclose(host_stream(stream)); }
-static int compat_fflush(void *stream) { return fflush(host_stream(stream)); }
+static int compat_fclose(void *stream)
+{
+    if (is_cpuinfo_file(stream) != 0) {
+        if (!cpuinfo_file.open) {
+            errno = EBADF;
+            return EOF;
+        }
+        cpuinfo_file.open = false;
+        cpuinfo_file.position = 0U;
+        return 0;
+    }
+    return fclose(host_stream(stream));
+}
+
+static int compat_fflush(void *stream)
+{
+    if (is_cpuinfo_file(stream) != 0) return 0;
+    return fflush(host_stream(stream));
+}
+
 static size_t compat_fread(void *buffer, size_t size, size_t count,
                            void *stream)
 {
+    size_t available;
+    size_t requested;
+    size_t copied;
+
+    if (is_cpuinfo_file(stream) != 0) {
+        if (!cpuinfo_file.open) {
+            errno = EBADF;
+            return 0U;
+        }
+        if (size == 0U || count == 0U) return 0U;
+        if (count > SIZE_MAX / size) {
+            errno = EOVERFLOW;
+            return 0U;
+        }
+        requested = size * count;
+        available = cpuinfo_file.size - cpuinfo_file.position;
+        copied = requested < available ? requested : available;
+        if (copied != 0U) {
+            (void)memcpy(buffer, cpuinfo_file.data + cpuinfo_file.position,
+                         copied);
+            cpuinfo_file.position += copied;
+        }
+        return copied / size;
+    }
     return fread(buffer, size, count, host_stream(stream));
 }
+
+static char *compat_fgets(char *buffer, int size, void *stream)
+{
+    size_t copied = 0U;
+
+    if (is_cpuinfo_file(stream) == 0)
+        return fgets(buffer, size, host_stream(stream));
+    if (!cpuinfo_file.open || buffer == NULL || size <= 0) {
+        errno = EBADF;
+        return NULL;
+    }
+    while (copied + 1U < (size_t)size &&
+           cpuinfo_file.position < cpuinfo_file.size) {
+        const unsigned char value =
+            cpuinfo_file.data[cpuinfo_file.position++];
+        buffer[copied++] = (char)value;
+        if (value == (unsigned char)'\n') break;
+    }
+    if (copied == 0U) return NULL;
+    buffer[copied] = '\0';
+    return buffer;
+}
+
+static int compat_fgetc(void *stream)
+{
+    if (is_cpuinfo_file(stream) != 0) {
+        if (!cpuinfo_file.open) {
+            errno = EBADF;
+            return EOF;
+        }
+        if (cpuinfo_file.position >= cpuinfo_file.size) return EOF;
+        return (int)cpuinfo_file.data[cpuinfo_file.position++];
+    }
+    return fgetc(host_stream(stream));
+}
+
+static int compat_getc(void *stream)
+{
+    return compat_fgetc(stream);
+}
+
+static int compat_ungetc(int character, void *stream)
+{
+    if (is_cpuinfo_file(stream) != 0) {
+        if (!cpuinfo_file.open || character == EOF ||
+            cpuinfo_file.position == 0U) {
+            errno = EBADF;
+            return EOF;
+        }
+        cpuinfo_file.position -= 1U;
+        return character;
+    }
+    return ungetc(character, host_stream(stream));
+}
+
 static size_t compat_fwrite(const void *buffer, size_t size, size_t count,
                             void *stream)
 {
@@ -236,10 +472,14 @@ static size_t compat_fwrite(const void *buffer, size_t size, size_t count,
 }
 static int compat_fseek(void *stream, int32_t offset, int origin)
 {
+    if (is_cpuinfo_file(stream) != 0)
+        return cpuinfo_seek((int64_t)offset, origin);
     return fseek(host_stream(stream), (long)offset, origin);
 }
 static int compat_fseeko(void *stream, int64_t offset, int origin)
 {
+    if (is_cpuinfo_file(stream) != 0)
+        return cpuinfo_seek(offset, origin);
     if (offset < INT32_MIN || offset > INT32_MAX) {
         errno = EOVERFLOW;
         return -1;
@@ -248,18 +488,48 @@ static int compat_fseeko(void *stream, int64_t offset, int origin)
 }
 static int32_t compat_ftell(void *stream)
 {
+    if (is_cpuinfo_file(stream) != 0) {
+        if (!cpuinfo_file.open) {
+            errno = EBADF;
+            return -1;
+        }
+        return (int32_t)cpuinfo_file.position;
+    }
     return (int32_t)ftell(host_stream(stream));
 }
 static int64_t compat_ftello(void *stream)
 {
+    if (is_cpuinfo_file(stream) != 0) {
+        if (!cpuinfo_file.open) {
+            errno = EBADF;
+            return -1;
+        }
+        return (int64_t)cpuinfo_file.position;
+    }
     return (int64_t)ftell(host_stream(stream));
 }
 static int compat_fwide(void *stream, int mode)
 {
+    if (is_cpuinfo_file(stream) != 0) {
+        (void)mode;
+        return 0;
+    }
     return fwide(host_stream(stream), mode);
 }
 static void *compat_fopen(const char *path, const char *mode)
 {
+    if (cpuinfo_compat_enabled() != 0 && path != NULL &&
+        strcmp(path, "/proc/cpuinfo") == 0 && mode != NULL &&
+        strchr(mode, 'r') != NULL && strchr(mode, '+') == NULL &&
+        strchr(mode, 'w') == NULL && strchr(mode, 'a') == NULL) {
+        cpuinfo_file.data = cpuinfo_text;
+        cpuinfo_file.size = sizeof(cpuinfo_text) - 1U;
+        cpuinfo_file.position = 0U;
+        cpuinfo_file.open = true;
+        (void)printf("G8-CPUINFO-COMPAT open path=/proc/cpuinfo "
+                     "size=%zu mode=%s\n", cpuinfo_file.size, mode);
+        return &cpuinfo_file;
+    }
     return fopen(path, mode);
 }
 static void *compat_fdopen(int descriptor, const char *mode)
@@ -1168,6 +1438,11 @@ void nfsmw_compat_init(void)
     size_t index;
 
     (void)memset(bionic_files, 0, sizeof(bionic_files));
+    cpuinfo_file.data = cpuinfo_text;
+    cpuinfo_file.size = sizeof(cpuinfo_text) - 1U;
+    cpuinfo_file.position = 0U;
+    cpuinfo_file.open = false;
+    cpuinfo_descriptor = -1;
     (void)memset(atexit_entries, 0, sizeof(atexit_entries));
     atexit_count = 0U;
     (void)memset(ctype_storage, 0, sizeof(ctype_storage));
@@ -1236,12 +1511,20 @@ uintptr_t nfsmw_compat_resolve(const char *name)
     RESOLVE_FUNCTION("dlopen", compat_dlopen);
     RESOLVE_FUNCTION("dlsym", compat_dlsym);
     RESOLVE_FUNCTION("dlclose", compat_dlclose);
+    RESOLVE_FUNCTION("open", compat_open);
+    RESOLVE_FUNCTION("read", compat_read);
+    RESOLVE_FUNCTION("lseek", compat_lseek);
+    RESOLVE_FUNCTION("close", compat_close);
     RESOLVE_FUNCTION("fclose", compat_fclose);
     RESOLVE_FUNCTION("fdopen", compat_fdopen);
     RESOLVE_FUNCTION("fflush", compat_fflush);
     RESOLVE_FUNCTION("fopen", compat_fopen);
     RESOLVE_FUNCTION("fprintf", compat_fprintf);
     RESOLVE_FUNCTION("fread", compat_fread);
+    RESOLVE_FUNCTION("fgets", compat_fgets);
+    RESOLVE_FUNCTION("fgetc", compat_fgetc);
+    RESOLVE_FUNCTION("getc", compat_getc);
+    RESOLVE_FUNCTION("ungetc", compat_ungetc);
     RESOLVE_FUNCTION("fseek", compat_fseek);
     RESOLVE_FUNCTION("fseeko", compat_fseeko);
     RESOLVE_FUNCTION("ftell", compat_ftell);

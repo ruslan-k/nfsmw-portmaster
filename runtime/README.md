@@ -31,6 +31,14 @@ COMBINED PASS: mapping, provider census, host preflights and relocation phase A 
 Android NDK already installed. Its output is an Android binary if linked and
 must not be shipped as the R36S runtime.
 
+For one reversible FMOD CPU-feature diagnostic, set
+`NFSMW_ARM32_CPUINFO_COMPAT=1`. The compatibility bridge then intercepts only
+read-only opens of exactly `/proc/cpuinfo` (both the stdio and fd-level
+`open` paths) and exposes a bounded synthetic ARMv7/NEON view; all other paths
+retain the normal host-backed bridge. The runtime logs `G8-CPUINFO-COMPAT` only
+when the intercepted file is actually opened. Leave the variable unset for the
+rollback/original behavior.
+
 The next stage grows the fake JavaVM/JNIEnv from target startup traces. Do not
 extend this mapper by copying the
 section-header-based loader from the CTW experiment: Android release binaries
