@@ -543,8 +543,8 @@ static float configured_performance_score(void)
 {
     static int initialized;
     /* Score 20 intentionally retains the title's highest visual tier. The
-     * R36S sustained playable frame rates with that tier once the failed
-     * music retry loop was suppressed. */
+     * The validated SpruceOS target sustains playable frame rates with that
+     * tier once the failed music retry loop was suppressed. */
     static float score = 20.0F;
 
     if (initialized == 0) {
@@ -992,7 +992,7 @@ static void *dispatch_object(void *receiver, struct fake_method *method,
     }
     if (strcmp(name, "GetDefaultLanguage") == 0) return new_string("en");
     if (strcmp(name, "GetDeviceLocale") == 0) return new_string("EN-US");
-    if (strcmp(name, "GetDeviceName") == 0) return new_string("R36S");
+    if (strcmp(name, "GetDeviceName") == 0) return new_string("TrimUI Smart Pro S");
     if (strcmp(name, "GetApplicationVersion") == 0)
         return new_string("1.3.128");
     if (strcmp(name, "getOsVersion") == 0) return new_string("4.4.4");
@@ -1097,7 +1097,7 @@ static void *jni_call_object_method_a(void *environment, void *object,
     if (method != NULL && strcmp(method->name, "GetDeviceLocale") == 0)
         return new_string("EN-US");
     if (method != NULL && strcmp(method->name, "GetDeviceName") == 0)
-        return new_string("R36S");
+        return new_string("TrimUI Smart Pro S");
     if (method != NULL && strcmp(method->name, "GetApplicationVersion") == 0)
         return new_string("1.3.128");
     if (method != NULL && strcmp(method->name, "getOsVersion") == 0)

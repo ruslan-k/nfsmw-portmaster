@@ -17,19 +17,19 @@ AArch64 SDL2/EGL/GLES presenter
 64-bit Mali-G57 userspace
 ```
 
-Do not rewrite the NFS Android loader/JNI/soft-float logic unless a concrete log proves it is necessary. That path already works on R36S and should remain untouched.
+Do not rewrite the NFS Android loader/JNI/soft-float logic unless a concrete log proves it is necessary. That path already works on legacy ARMHF handheld and should remain untouched.
 
 ## Development rules for the agent
 
 1. Work in `tsps-64bit-gles-bridge`; do not develop directly on `main`.
-2. Keep the existing R36S/direct-armhf backend working. Every TSPS-specific change must be gated.
+2. Keep the existing direct-armhf backend working. Every TSPS-specific change must be gated.
 3. Prioritize the shortest route to a real hardware race. Do not spend time polishing packaging before the TSPS backend reaches gameplay.
 4. Make changes in batches. Do not stop after every tiny edit to ask for confirmation.
 5. Do not save or publish intermediate broken release archives. Commit source changes when they form a coherent checkpoint.
 6. When a test fails, read `logs/nfsmw.log`, identify the first actual failure, patch that failure, and immediately retest. Avoid speculative rewrites.
 7. Keep diagnostics concise but preserve the lines that identify: architecture, loader path, presenter readiness, GLES vendor/renderer/version, shader failures, unknown proxy opcodes, Android constructor/JNI milestones, audio startup, and exit code.
 8. Stability is secondary to reaching gameplay quickly. Once races work, clean up and harden the implementation.
-9. Never remove the legacy R36S code path merely because TSPS works.
+9. Never remove the legacy direct-armhf path merely because TSPS works.
 10. Do not increase rendering resolution above 640x480 during initial bring-up.
 
 ## Current implementation and proof-of-concept behavior
@@ -61,7 +61,7 @@ The launcher also accepts a card-ready layout directly under `ports/nfsmw/`, whi
 
 ### 1. Prepare the NFS port
 
-Build the normal ARMv7 NFS runtime exactly as for R36S:
+Build the normal ARMv7 NFS runtime exactly as for legacy ARMHF handheld:
 
 ```bash
 ZIG=/path/to/zig tools/build_tsps_runtime.sh
@@ -156,7 +156,7 @@ When implementing presenter-owned input, preserve NFS-specific button semantics 
 
 #### H. sound fails
 
-Do not block graphics bring-up on music. Preserve the existing working NFS sound-effects path first. If SDL/ALSA works but music loops, keep music disabled as in the current R36S port.
+The validated TrimUI Smart Pro S path now supports native FMOD MP3 music as well as the existing sound-effects worker. Preserve both paths and collect `logs/nfsmw.log` if a future device run regresses.
 
 ## Phase 2 — make NFS standalone after gameplay works
 
@@ -200,7 +200,7 @@ Final launcher policy:
 
 ```text
 SmartProS/spruceOS -> 32->64 bridge backend
-R36S/ArkOS         -> existing direct armhf Mali backend
+legacy direct-armhf backend
 manual override    -> NFSMW_TSPS_BRIDGE=0/1
 ```
 
@@ -243,7 +243,7 @@ A TSPS implementation is considered successful when all of the following are tru
 - sound effects work;
 - at least one race can be completed;
 - exit returns cleanly to PortMaster/spruceOS;
-- R36S legacy backend is still available and unchanged in behavior.
+- legacy ARMHF handheld legacy backend is still available and unchanged in behavior.
 
 ## Useful environment switches
 
@@ -263,6 +263,6 @@ Keep 640x480 + letterbox for first bring-up.
 - Do not search for or install a 32-bit Mali-G57 driver as the primary solution.
 - Do not port the whole Android game runtime to AArch64; the proprietary game code is ARMv7.
 - Do not replace the known-good ELF/JNI/Bionic loader stack without evidence.
-- Do not merge TSPS hacks unconditionally into the R36S path.
+- Do not merge TSPS hacks unconditionally into the legacy ARMHF handheld path.
 - Do not start with 1280x720 rendering.
 - Do not spend time building a polished release archive before the first TSPS race works.

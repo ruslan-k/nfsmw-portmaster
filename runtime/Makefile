@@ -44,7 +44,7 @@ inspect: $(TARGET)
 	$(OBJDUMP) -p $(TARGET) | sed -n '/file format/,$$p'
 
 # This validates the ARM32 source with an installed Android NDK when the Linux
-# armhf cross toolchain is unavailable. It is not the R36S release build.
+# armhf cross toolchain is unavailable. It is not the validated device build.
 NDK_CC ?= $(HOME)/Library/Android/sdk/ndk/27.1.12297006/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi21-clang
 syntax-android:
 	$(NDK_CC) $(CPPFLAGS) -std=c17 -O0 -Wall -Wextra -Wpedantic \

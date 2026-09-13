@@ -63,7 +63,7 @@ C++ family to the matching guest provider instead of using unrestricted host
 ## ARM procedure-call convention
 
 No module declares `Tag_ABI_VFP_args`. This is Android's softfp/base AAPCS.
-ArkOS armhf host libraries pass scalar floating-point arguments in VFP
+SpruceOS armhf host libraries pass scalar floating-point arguments in VFP
 registers. Directly resolving functions such as `glClearColor`,
 `glDepthRangef`, `glLineWidth`, `glPolygonOffset`, `glSampleCoverage`,
 `glTexParameterf`, scalar `glUniform*f`, and scalar `glVertexAttrib*f` to host
@@ -125,7 +125,7 @@ nativeOnStateEvent(com.bda.controller.StateEvent)V
 
 The fake Java side must at minimum supply activity/run-loop methods,
 filesystem paths, OBB identity/path, locale/device information, bitmap access,
-MOGA event accessors, and Nimble class lookup. Startup tracing on the R36S
+MOGA event accessors, and Nimble class lookup. Startup tracing on the TrimUI Smart Pro S running SpruceOS
 should grow this contract method-by-method; unknown essential methods should
 fail loudly rather than return a universal zero.
 

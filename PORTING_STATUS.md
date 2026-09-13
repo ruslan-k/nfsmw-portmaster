@@ -1,80 +1,57 @@
 # Porting status
 
-Updated: 2026-08-10
+Updated: 2026-09-14
 
-## Current state
+## Validated target
 
-The R36S public alpha is playable. It boots the supported Android ARMv7 build,
-renders full races, accepts analog and digital controls, saves career progress,
-and outputs sound effects. The current release is
-[`v0.1.0-alpha`](https://github.com/Detoy/nfsmw-r36s/releases/tag/v0.1.0-alpha).
+The current working target is the **TrimUI Smart Pro S running SpruceOS**. The game executes as an ARMv7 guest while the device uses an AArch64 GLES presenter and bridge.
 
 | Area | Status |
 |---|---|
-| ARMv7 loader and relocation | Pass on R36S |
-| JNI and Android compatibility | Pass for gameplay |
-| OpenGL ES 2 rendering | Pass at 640×480 |
+| ARMv7 loader and relocation | Pass on TrimUI Smart Pro S / SpruceOS |
+| JNI and Android compatibility | Pass for supported gameplay path |
+| GLES bridge and presenter | Pass at 1280x720 output |
 | Race controls | Pass |
-| Front-end controls | Partial; see car-selection issue |
+| Front-end controls | Pass with the car-selection timing workaround |
 | Sound effects | Pass |
-| Music | Disabled |
-| Performance | 48.84 FPS measured average |
-| PortMaster packaging | Public alpha |
+| Native MP3 soundtrack | Pass in loading, front end, and races |
+| Audio worker | Pass; no severe slowdown in the validated run |
+| PortMaster package | Built and physically tested |
 
-## Validated technical milestones
+## Audio fix
 
-- All five bundled ARMv7 modules load on the physical handheld.
-- All 56,142 dynamic relocations resolve.
-- All guest constructors required for startup complete.
-- The compatibility audit covers 84 imported Bionic/Android boundary APIs.
-- All 49 imported scalar-float APIs use ARM soft-float thunks.
-- The OBB reader indexes all 2,411 entries without expanding the archive.
-- GLES2, SDL controller input and SDL/ALSA output run through the R36S Linux
-  graphics and audio stack.
-- A full high-graphics test session rendered 16,277 frames in 333.265 seconds:
-  **48.84 FPS average**, with working sound effects.
-- Multiple tutorial and career races have been completed on real hardware.
+FMOD Ex reports version `0x00044006`, which is FMOD Ex 4.40.06. Its custom async filesystem path returned `33` for every music track even though callbacks supplied valid reads. A verified memory A/B using the exact ARM32 `FMOD_CREATESOUNDEXINFO` layout and mode `0x000008c0` returned `0` and produced audible music.
 
-## Release identity
+The final runtime applies that native FMOD MP3 path to all files under:
 
-- Mapper SHA-256:
-  `68c2fccb7fb71238bce4a2c266be30cb223855a3a70c84d31b091982aabbf628`
-- Mapper GNU build ID: `6e9de3b982ba449f69ac44e5b8804c1e1fbc9bff`
-- Alpha archive SHA-256:
-  `3f139a3eb68f00c9b9753a074d1a9bb99578061573553db2ebd5488d6ef70fb1`
+```text
+/published/sounds/music/*.mp3
+```
 
-The release archive contains no APK, OBB, extracted Android library, game save,
-or other proprietary game payload.
+Each compressed track is loaded through the already-working guest callbacks, passed to FMOD with `FMOD_SOFTWARE | FMOD_CREATESTREAM | FMOD_OPENMEMORY`, and retained until process exit. There is no WAV or PCM soundtrack fallback.
 
-## Remaining work
+## Device verification
 
-### Car-selection Continue / Buy action
+- Device: TrimUI Smart Pro S
+- OS: SpruceOS
+- Guest: ARMHF Android ARMv7 libraries
+- Presenter: AArch64 GLES bridge
+- Final device runtime SHA-256:
+  `21d372204abd22694a82f848f3e53d3d6a20e4ba71737675a7c8087bac12488f`
+- Final verified source tree: PR #1 head `d71ce374db0576af601cd4b73b954e8d96110f42`
+- User-confirmed result: loading, menu, and race music all work.
 
-The touch-first `car_select_new` screen does not expose its Continue/Buy button
-as a MOGA highlight target after the rollout settles. A during the rollout
-works; afterward it activates the class filter instead.
+## Remaining issue
 
-The most promising fix is to make synthetic touch input use a view object
-accepted by `GameGLSurfaceView_nativeTouchScreenEvent`. Current taps are dropped
-with `AndroidInput: Unregistered view calling nativeTouchEvent`.
+The pre-race car-selection or purchase action can require pressing B to leave, A to re-enter, and A again during the short rollout window. The later modifications screen works normally.
 
-Approaches already ruled out:
+## Reproducible checks
 
-- duplicate D-pad/analog delivery;
-- MOGA right-stick focus actions;
-- forcing the title's pointer-mode flag;
-- forcing controller-presence bytes.
+```sh
+python3 tools/test_fmod_audio_contract.py path/to/libfmodex.so
+python3 tools/test_tsps_av_contract.py
+bash -n 'portmaster/Need for Speed Most Wanted.sh'
+bash portmaster/build_port.sh
+```
 
-See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) and
-[issue #1](https://github.com/Detoy/nfsmw-r36s/issues/1).
-
-### Music
-
-The original Android music decoder fails and retries continuously on Linux,
-roughly halving performance. Music remains disabled while the working sound
-effects path is preserved.
-
-### Wider device testing
-
-Only the R36S running ArkOS has been validated. Other ARMv7 PortMaster devices
-may need graphics-driver, controller-map or memory adjustments.
+The package must not contain APK, OBB, extracted Android libraries, saves, logs, or other proprietary game payloads.
