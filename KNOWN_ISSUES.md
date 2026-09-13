@@ -8,9 +8,9 @@ After the car-selection animation settles, A can change the car class instead of
 
 Press B to leave the screen, A to re-enter, then A again immediately, before the animation settles. The later modifications screen works normally.
 
-## Experimental cursor
+## Mouse cursor
 
-Select toggles a development cursor, but taps are not a supported control method.
+Press **Select** to activate or deactivate the virtual mouse cursor. While the cursor is active, use the stick or D-pad to move it and A/B to interact with menus. Start keeps its normal pause/map function.
 
 ## Reporting
 

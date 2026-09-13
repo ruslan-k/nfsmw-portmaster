@@ -19,6 +19,7 @@ L1: brake / reverse
 R1: nitrous
 L1/R1 in menus: change top-level section
 Start: pause / map selection
+Select: activate/deactivate the mouse cursor
 Select+Start: exit to PortMaster
 
 Sound effects and native FMOD MP3 music are supported. Music works during
