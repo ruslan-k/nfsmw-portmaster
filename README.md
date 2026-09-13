@@ -25,6 +25,9 @@ nfsmw-tsps-spruceos-v0.2.0.zip
 
 It contains no proprietary game payload. The package includes the launcher, runtime, setup script, metadata, and compatibility files. APK/OBB files and extracted libraries are excluded.
 
+[Download the package from the v0.2.0 release](https://github.com/ruslan-k/nfsmw-portmaster/releases/download/v0.2.0/nfsmw-tsps-spruceos-v0.2.0.zip)  
+SHA-256: `b10696062d401af77e33c6f254dfb00103ea18f13c621117004ef3a2085f0ee0`
+
 ## Installation through PortMaster
 
 1. Copy `nfsmw-tsps-spruceos-v0.2.0.zip` to the device and install it with PortMaster.
